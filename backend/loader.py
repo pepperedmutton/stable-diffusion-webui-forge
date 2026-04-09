@@ -7,6 +7,7 @@ import backend.args
 import huggingface_guess
 
 from diffusers import DiffusionPipeline
+from diffusers.configuration_utils import FrozenDict
 from transformers import modeling_utils
 
 from backend import memory_management
@@ -16,16 +17,19 @@ from backend.operations import using_forge_operations
 from backend.nn.vae import IntegratedAutoencoderKL
 from backend.nn.clip import IntegratedCLIP
 from backend.nn.unet import IntegratedUNet2DConditionModel
+from backend.misc.lumina2_state_dict import convert_lumina2_to_diffusers, is_lumina2_original_state_dict
 
 from backend.diffusion_engine.sd15 import StableDiffusion
 from backend.diffusion_engine.sd20 import StableDiffusion2
 from backend.diffusion_engine.sdxl import StableDiffusionXL, StableDiffusionXLRefiner
 from backend.diffusion_engine.sd35 import StableDiffusion3
+from backend.diffusion_engine.lumina2 import StableDiffusionLumina2
+from backend.diffusion_engine.anima import Anima
 from backend.diffusion_engine.flux import Flux
 from backend.diffusion_engine.chroma import Chroma
 
 
-possible_models = [StableDiffusion, StableDiffusion2, StableDiffusionXLRefiner, StableDiffusionXL, StableDiffusion3, Chroma, Flux]
+possible_models = [StableDiffusion, StableDiffusion2, StableDiffusionXLRefiner, StableDiffusionXL, StableDiffusion3, StableDiffusionLumina2, Chroma, Anima, Flux]
 
 
 logging.getLogger("diffusers").setLevel(logging.ERROR)
@@ -47,17 +51,24 @@ def load_huggingface_component(guess, component_name, lib_name, cls_name, repo_p
             comp = cls.from_pretrained(os.path.join(repo_path, component_name))
             comp._eventual_warn_about_too_long_sequence = lambda *args, **kwargs: None
             return comp
-        if cls_name in ['AutoencoderKL']:
+        if cls_name in ['AutoencoderKL', 'WanVAEModel']:
             assert isinstance(state_dict, dict) and len(state_dict) > 16, 'You do not have VAE state dict!'
 
-            config = IntegratedAutoencoderKL.load_config(config_path)
+            if cls_name == 'AutoencoderKL':
+                config = IntegratedAutoencoderKL.load_config(config_path)
 
-            with using_forge_operations(device=memory_management.cpu, dtype=memory_management.vae_dtype()):
-                model = IntegratedAutoencoderKL.from_config(config)
+                with using_forge_operations(device=memory_management.cpu, dtype=memory_management.vae_dtype()):
+                    model = IntegratedAutoencoderKL.from_config(config)
 
-            if 'decoder.up_blocks.0.resnets.0.norm1.weight' in state_dict.keys(): #diffusers format
-                state_dict = huggingface_guess.diffusers_convert.convert_vae_state_dict(state_dict)
-            load_state_dict(model, state_dict, ignore_start='loss.')
+                if 'decoder.up_blocks.0.resnets.0.norm1.weight' in state_dict.keys(): #diffusers format
+                    state_dict = huggingface_guess.diffusers_convert.convert_vae_state_dict(state_dict)
+                load_state_dict(model, state_dict, ignore_start='loss.')
+            else:
+                from backend.nn.wan_vae import IntegratedWanVAEModel
+                config = read_arbitrary_config(config_path)
+                with using_forge_operations(device=memory_management.cpu, dtype=memory_management.vae_dtype()):
+                    model = IntegratedWanVAEModel(**config)
+                load_state_dict(model, state_dict)
             return model
         if component_name.startswith('text_encoder') and cls_name in ['CLIPTextModel', 'CLIPTextModelWithProjection']:
             assert isinstance(state_dict, dict) and len(state_dict) > 16, 'You do not have CLIP state dict!'
@@ -77,6 +88,73 @@ def load_huggingface_component(guess, component_name, lib_name, cls_name, repo_p
                 'logit_scale'
             ], log_name=cls_name)
 
+            return model
+        if cls_name == 'Gemma2Model':
+            assert isinstance(state_dict, dict) and len(state_dict) > 16, 'You do not have Gemma2 state dict!'
+
+            to_args = dict(device=memory_management.cpu, dtype=memory_management.text_encoder_dtype())
+
+            normalized_state_dict = {}
+            for key, value in state_dict.items():
+                if key == 'logit_scale':
+                    continue
+                if key.startswith('transformer.'):
+                    key = key[len('transformer.'):]
+                if key.startswith('model.'):
+                    key = key[len('model.'):]
+                normalized_state_dict[key] = value
+
+            # Anima uses a Qwen3-0.6B style text encoder (q_norm / k_norm + head_dim=128),
+            # but model_index labels it as Gemma2 for compatibility.
+            is_qwen3_style = any(k.endswith('.self_attn.q_norm.weight') for k in normalized_state_dict.keys())
+            if is_qwen3_style:
+                from backend.nn.qwen3 import IntegratedQwen3Model
+
+                config = read_arbitrary_config(config_path)
+                with modeling_utils.no_init_weights():
+                    with using_forge_operations(**to_args, manual_cast_enabled=True):
+                        model = IntegratedQwen3Model(config=config).to(**to_args)
+
+                missing, unexpected = model.load_state_dict(normalized_state_dict, strict=False)
+                if len(missing) > 0:
+                    print(f'Qwen3Model Missing: {missing}')
+                if len(unexpected) > 0:
+                    print(f'Qwen3Model Unexpected: {unexpected}')
+                return model
+
+            from transformers import Gemma2Config, Gemma2Model
+            config = Gemma2Config.from_pretrained(config_path)
+
+            # Keep no_init_weights to avoid init path incompatibility with forge operations,
+            # then explicitly initialize unmatched parameters after loading.
+            with modeling_utils.no_init_weights():
+                with using_forge_operations(**to_args, manual_cast_enabled=True):
+                    model = Gemma2Model(config).to(**to_args)
+
+            missing, unexpected = model.load_state_dict(normalized_state_dict, strict=False)
+
+            # Some Anima text encoder checkpoints (Qwen3-0.6B style) only partially match Gemma2.
+            # Without explicit init, missing params can contain undefined data and destabilize sampling.
+            named_params = dict(model.named_parameters())
+            named_buffers = dict(model.named_buffers())
+            with torch.no_grad():
+                for key in missing:
+                    tensor = named_params.get(key, None)
+                    if tensor is None:
+                        tensor = named_buffers.get(key, None)
+                    if tensor is None:
+                        continue
+                    if key.endswith(".bias"):
+                        tensor.zero_()
+                    elif tensor.ndim == 1:
+                        tensor.fill_(1.0)
+                    else:
+                        torch.nn.init.normal_(tensor, mean=0.0, std=float(getattr(config, "initializer_range", 0.02)))
+
+            if len(missing) > 0:
+                print(f'{cls_name} Missing: {missing}')
+            if len(unexpected) > 0:
+                print(f'{cls_name} Unexpected: {unexpected}')
             return model
         if cls_name == 'T5EncoderModel':
             assert isinstance(state_dict, dict) and len(state_dict) > 16, 'You do not have T5 state dict!'
@@ -109,12 +187,30 @@ def load_huggingface_component(guess, component_name, lib_name, cls_name, repo_p
             load_state_dict(model, state_dict, log_name=cls_name, ignore_errors=['transformer.encoder.embed_tokens.weight', 'logit_scale'])
 
             return model
-        if cls_name in ['UNet2DConditionModel', 'FluxTransformer2DModel', 'SD3Transformer2DModel', 'ChromaTransformer2DModel']:
+        if cls_name in ['UNet2DConditionModel', 'AnimaTransformer2DModel', 'FluxTransformer2DModel', 'SD3Transformer2DModel', 'ChromaTransformer2DModel', 'Lumina2Transformer2DModel']:
             assert isinstance(state_dict, dict) and len(state_dict) > 16, 'You do not have model state dict!'
 
             model_loader = None
             if cls_name == 'UNet2DConditionModel':
                 model_loader = lambda c: IntegratedUNet2DConditionModel.from_config(c)
+            elif cls_name == 'AnimaTransformer2DModel':
+                anima_cosmos_cls = getattr(huggingface_guess.model_list, 'AnimaCosmos', None)
+                is_anima_cosmos = (anima_cosmos_cls is not None and isinstance(guess, anima_cosmos_cls))
+                # huggingface_guess.guess() strips `image_model`, so use model class and config hints.
+                is_anima_cosmos = is_anima_cosmos or (
+                    'max_img_h' in guess.unet_config and 'patch_spatial' in guess.unet_config
+                )
+
+                if is_anima_cosmos:
+                    from backend.nn.anima_cosmos import IntegratedAnimaCosmosTransformer2DModel
+                    model_loader = lambda c: IntegratedAnimaCosmosTransformer2DModel(**c)
+                    if any(k.startswith("net.") for k in state_dict.keys()):
+                        state_dict = {k[4:] if k.startswith("net.") else k: v for k, v in state_dict.items()}
+                    if not any(k.startswith("inner_model.") for k in state_dict.keys()):
+                        state_dict = {f"inner_model.{k}": v for k, v in state_dict.items()}
+                else:
+                    from backend.nn.anima import IntegratedAnimaTransformer2DModel
+                    model_loader = lambda c: IntegratedAnimaTransformer2DModel(**c)
             elif cls_name == 'FluxTransformer2DModel':
                 from backend.nn.flux import IntegratedFluxTransformer2DModel
                 model_loader = lambda c: IntegratedFluxTransformer2DModel(**c)
@@ -124,6 +220,11 @@ def load_huggingface_component(guess, component_name, lib_name, cls_name, repo_p
             elif cls_name == 'SD3Transformer2DModel':
                 from backend.nn.mmditx import MMDiTX
                 model_loader = lambda c: MMDiTX(**c)
+            elif cls_name == 'Lumina2Transformer2DModel':
+                from backend.nn.lumina2 import IntegratedLumina2Transformer2DModel
+                model_loader = lambda c: IntegratedLumina2Transformer2DModel(**c)
+                if is_lumina2_original_state_dict(state_dict):
+                    state_dict = convert_lumina2_to_diffusers(state_dict)
 
             unet_config = guess.unet_config.copy()
             state_dict_parameters = memory_management.state_dict_parameters(state_dict)
@@ -162,7 +263,7 @@ def load_huggingface_component(guess, component_name, lib_name, cls_name, repo_p
             load_state_dict(model, state_dict)
 
             if hasattr(model, '_internal_dict'):
-                model._internal_dict = unet_config
+                model._internal_dict = FrozenDict(unet_config)
             else:
                 model.config = unet_config
 
@@ -211,6 +312,13 @@ def replace_state_dict(sd, asd, guess):
         asd = asd_new
 
     if "decoder.conv_in.weight" in asd:
+        keys_to_delete = [k for k in sd if k.startswith(vae_key_prefix)]
+        for k in keys_to_delete:
+            del sd[k]
+        for k, v in asd.items():
+            sd[vae_key_prefix + k] = v
+
+    if "conv1.weight" in asd and "decoder.conv1.weight" in asd:
         keys_to_delete = [k for k in sd if k.startswith(vae_key_prefix)]
         for k in keys_to_delete:
             del sd[k]
@@ -436,6 +544,15 @@ def replace_state_dict(sd, asd, guess):
         for k, v in asd.items():
             sd[f"{text_encoder_key_prefix}t5xxl.transformer.{k}"] = v
 
+    if "model.embed_tokens.weight" in asd or "embed_tokens.weight" in asd:
+        keys_to_delete = [k for k in sd if k.startswith(f"{text_encoder_key_prefix}gemma2_2b.")]
+        for k in keys_to_delete:
+            del sd[k]
+        for k, v in asd.items():
+            if k == "logit_scale":
+                continue
+            sd[f"{text_encoder_key_prefix}gemma2_2b.{k}"] = v
+
     return sd
 
 
@@ -446,10 +563,49 @@ def preprocess_state_dict(sd):
     return sd
 
 
+def detect_anima_cosmos_state_dict(sd):
+    anima_keys = (
+        "model.diffusion_model.blocks.0.mlp.layer1.weight",
+        "model.diffusion_model.net.blocks.0.mlp.layer1.weight",
+    )
+    llm_adapter_prefixes = (
+        "model.diffusion_model.llm_adapter.",
+        "model.diffusion_model.net.llm_adapter.",
+    )
+
+    if any(k in sd for k in anima_keys):
+        return True
+
+    if any(any(x.startswith(prefix) for x in sd.keys()) for prefix in llm_adapter_prefixes):
+        return True
+
+    return False
+
+
 def split_state_dict(sd, additional_state_dicts: list = None):
-    sd = load_torch_file(sd)
-    sd = preprocess_state_dict(sd)
+    loaded_sd = load_torch_file(sd)
+    # Never mutate cached checkpoint dicts in-place. sd_models keeps them in RAM cache,
+    # and split_state_dict() does destructive key transforms later.
+    original_sd = dict(loaded_sd) if isinstance(loaded_sd, dict) else loaded_sd
+    preprocessed_sd = preprocess_state_dict(original_sd)
+
+    # Keep the existing behavior first, then fall back to the raw state dict.
+    # Some checkpoints can be recognized only before prefix normalization.
+    sd = preprocessed_sd
     guess = huggingface_guess.guess(sd)
+    if guess is None and original_sd is not preprocessed_sd:
+        fallback_guess = huggingface_guess.guess(original_sd)
+        if fallback_guess is not None:
+            sd = original_sd
+            guess = fallback_guess
+
+    if guess is None:
+        if detect_anima_cosmos_state_dict(preprocessed_sd) or detect_anima_cosmos_state_dict(original_sd):
+            raise RuntimeError(
+                "Detected Anima (Cosmos Predict2) checkpoint format, but this Forge runtime "
+                "does not include a compatible loader for that architecture."
+            )
+        raise RuntimeError("Unable to detect a supported model architecture from checkpoint state dict.")
 
     if isinstance(additional_state_dicts, list):
         for asd in additional_state_dicts:
@@ -495,11 +651,11 @@ if not chroma_is_in_huggingface_guess:
         }
         unet_remove_config = ['guidance_embed']
 @torch.inference_mode()
-def forge_loader(sd, additional_state_dicts=None):
+def forge_loader(sd, additional_state_dicts=None, source_path=None):
     try:
         state_dicts, estimated_config = split_state_dict(sd, additional_state_dicts=additional_state_dicts)
-    except:
-        raise ValueError('Failed to recognize model type!')
+    except Exception as e:
+        raise ValueError(f'Failed to recognize model type! ({e})') from e
     
     if not chroma_is_in_huggingface_guess \
         and estimated_config.huggingface_repo == "black-forest-labs/FLUX.1-schnell"  \
@@ -533,10 +689,12 @@ def forge_loader(sd, additional_state_dicts=None):
     try:
         import yaml
         from pathlib import Path
-        config_filename = os.path.splitext(sd)[0] + '.yaml'
-        if Path(config_filename).is_file():
-            with open(config_filename, 'r') as stream:
-                yaml_config = yaml.safe_load(stream)
+        yaml_source_path = source_path if source_path is not None else sd
+        if isinstance(yaml_source_path, (str, bytes, os.PathLike)):
+            config_filename = os.path.splitext(yaml_source_path)[0] + '.yaml'
+            if Path(config_filename).is_file():
+                with open(config_filename, 'r') as stream:
+                    yaml_config = yaml.safe_load(stream)
     except ImportError:
         pass
 

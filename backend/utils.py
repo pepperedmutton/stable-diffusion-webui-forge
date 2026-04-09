@@ -20,6 +20,9 @@ def read_arbitrary_config(directory):
 
 
 def load_torch_file(ckpt, safe_load=False, device=None):
+    if isinstance(ckpt, dict):
+        return ckpt
+
     if device is None:
         device = torch.device("cpu")
     if ckpt.lower().endswith(".safetensors"):

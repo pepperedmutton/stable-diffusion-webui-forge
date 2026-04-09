@@ -37,11 +37,13 @@ class ScriptSampler(scripts.ScriptBuiltinUI):
             PasteField(self.scheduler, sd_samplers.get_scheduler_from_infotext, api="scheduler"),
         ]
 
-        shared.options_templates.update(shared.options_section(('ui_sd', "UI defaults 'sd'", "ui"), {
-            "sd_t2i_sampler":     shared.OptionInfo('Euler a',      "txt2img sampler",      gr.Dropdown, {"choices": sampler_names}),
-            "sd_t2i_scheduler":   shared.OptionInfo('Automatic',    "txt2img scheduler",    gr.Dropdown, {"choices": scheduler_names}),
-            "sd_i2i_sampler":     shared.OptionInfo('Euler a',      "img2img sampler",      gr.Dropdown, {"choices": sampler_names}),
-            "sd_i2i_scheduler":   shared.OptionInfo('Automatic',    "img2img scheduler",    gr.Dropdown, {"choices": scheduler_names}),
+        shared.options_templates.update(shared.options_section(('ui_lumina', "UI defaults 'lumina'", "ui"), {
+            "lumina_t2i_steps":       shared.OptionInfo(25,             "txt2img steps",        gr.Slider, {"minimum": 1, "maximum": 150, "step": 1}),
+            "lumina_t2i_sampler":     shared.OptionInfo('RES Multistep',"txt2img sampler",      gr.Dropdown, {"choices": sampler_names}),
+            "lumina_t2i_scheduler":   shared.OptionInfo('Simple',       "txt2img scheduler",    gr.Dropdown, {"choices": scheduler_names}),
+            "lumina_i2i_steps":       shared.OptionInfo(25,             "img2img steps",        gr.Slider, {"minimum": 1, "maximum": 150, "step": 1}),
+            "lumina_i2i_sampler":     shared.OptionInfo('RES Multistep',"img2img sampler",      gr.Dropdown, {"choices": sampler_names}),
+            "lumina_i2i_scheduler":   shared.OptionInfo('Simple',       "img2img scheduler",    gr.Dropdown, {"choices": scheduler_names}),
         }))
         shared.options_templates.update(shared.options_section(('ui_xl', "UI defaults 'xl'", "ui"), {
             "xl_t2i_sampler":     shared.OptionInfo('DPM++ 2M SDE', "txt2img sampler",      gr.Dropdown, {"choices": sampler_names}),

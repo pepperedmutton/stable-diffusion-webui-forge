@@ -8,7 +8,6 @@ from modules.shared import opts, state
 from backend.sampling.sampling_function import sampling_prepare, sampling_cleanup
 from modules import extra_networks
 import k_diffusion.sampling
-from modules_forge import main_entry
 
 SamplerDataTuple = namedtuple('SamplerData', ['name', 'constructor', 'aliases', 'options'])
 
@@ -36,6 +35,21 @@ def setup_img2img_steps(p, steps=None):
 approximation_indexes = {"Full": 0, "Approx NN": 1, "Approx cheap": 2, "TAESD": 3}
 
 
+def _model_supports_cheap_preview(model=None):
+    if model is None:
+        model = shared.sd_model
+
+    latent_format = getattr(getattr(model, "model_config", None), "latent_format", None)
+    factors = getattr(latent_format, "latent_rgb_factors", None)
+    return factors is not None
+
+
+def _decode_full_preview(sample, model=None):
+    if model is None:
+        model = shared.sd_model
+    return model.decode_first_stage(sample)
+
+
 def samples_to_images_tensor(sample, approximation=None, model=None):
     """Transforms 4-channel latent space images into 3-channel RGB image tensors, with values in range [-1, 1]."""
 
@@ -45,24 +59,33 @@ def samples_to_images_tensor(sample, approximation=None, model=None):
             approximation = 1
 
     if approximation == 2:
-        x_sample = sd_vae_approx.cheap_approximation(sample)
+        if _model_supports_cheap_preview(model):
+            x_sample = sd_vae_approx.cheap_approximation(sample)
+        else:
+            # Some latent formats (for example Wan21/Anima) do not provide
+            # latent_rgb_factors, so cheap preview cannot work there.
+            x_sample = _decode_full_preview(sample, model=model)
     elif approximation == 1:
         m = sd_vae_approx.model()
         if m is None:
-            x_sample = sd_vae_approx.cheap_approximation(sample)
+            if _model_supports_cheap_preview(model):
+                x_sample = sd_vae_approx.cheap_approximation(sample)
+            else:
+                x_sample = _decode_full_preview(sample, model=model)
         else:
             x_sample = m(sample.to(devices.device, devices.dtype)).detach()
     elif approximation == 3:
         m = sd_vae_taesd.decoder_model()
         if m is None:
-            x_sample = sd_vae_approx.cheap_approximation(sample)
+            if _model_supports_cheap_preview(model):
+                x_sample = sd_vae_approx.cheap_approximation(sample)
+            else:
+                x_sample = _decode_full_preview(sample, model=model)
         else:
             x_sample = m(sample.to(devices.device, devices.dtype)).detach()
             x_sample = x_sample * 2 - 1
     else:
-        if model is None:
-            model = shared.sd_model
-        x_sample = model.decode_first_stage(sample)
+        x_sample = _decode_full_preview(sample, model=model)
 
     return x_sample
 
@@ -164,6 +187,8 @@ replace_torchsde_browinan()
 
 
 def apply_refiner(cfg_denoiser, x):
+    from modules_forge import main_entry
+
     completed_ratio = cfg_denoiser.step / cfg_denoiser.total_steps
     refiner_switch_at = cfg_denoiser.p.refiner_switch_at
     refiner_checkpoint_info = cfg_denoiser.p.refiner_checkpoint_info

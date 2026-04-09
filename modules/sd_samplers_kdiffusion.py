@@ -14,6 +14,7 @@ from backend.sampling.sampling_function import sampling_prepare, sampling_cleanu
 samplers_k_diffusion = [
     ('DPM++ 2M', 'sample_dpmpp_2m', ['k_dpmpp_2m'], {'scheduler': 'karras'}),
     ('DPM++ SDE', 'sample_dpmpp_sde', ['k_dpmpp_sde'], {'scheduler': 'karras', "second_order": True, "brownian_noise": True}),
+    ('ER-SDE', 'sample_er_sde', ['er_sde'], {'scheduler': 'simple'}),
     ('DPM++ 2M SDE', 'sample_dpmpp_2m_sde', ['k_dpmpp_2m_sde'], {'scheduler': 'exponential', "brownian_noise": True}),
     ('DPM++ 2M SDE Heun', 'sample_dpmpp_2m_sde', ['k_dpmpp_2m_sde_heun'], {'scheduler': 'exponential', "brownian_noise": True, "solver_type": "heun"}),
     ('DPM++ 2S a', 'sample_dpmpp_2s_ancestral', ['k_dpmpp_2s_a'], {'scheduler': 'karras', "uses_ensd": True, "second_order": True}),
@@ -31,6 +32,7 @@ samplers_k_diffusion = [
     ('IPNDM', 'sample_ipndm', ['ipndm'], {}),
     ('IPNDM_V', 'sample_ipndm_v', ['ipndm_v'], {}),
     ('DEIS', 'sample_deis', ['deis'], {}),
+    ('RES Multistep', 'sample_res_multistep', ['res_multistep'], {'scheduler': 'simple'}),
 ]
 
 
@@ -48,8 +50,10 @@ sampler_extra_params = {
     'sample_dpm_2_ancestral': ['s_noise'],
     'sample_dpmpp_2s_ancestral': ['s_noise'],
     'sample_dpmpp_sde': ['s_noise'],
+    'sample_er_sde': ['s_noise'],
     'sample_dpmpp_2m_sde': ['s_noise'],
     'sample_dpmpp_3m_sde': ['s_noise'],
+    'sample_res_multistep': ['s_noise'],
 }
 
 k_diffusion_samplers_map = {x.name: x for x in samplers_data_k_diffusion}

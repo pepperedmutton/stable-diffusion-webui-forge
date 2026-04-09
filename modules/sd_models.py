@@ -304,6 +304,17 @@ def get_checkpoint_state_dict(checkpoint_info: CheckpointInfo, timer):
     res = load_torch_file(checkpoint_info.filename)
     timer.record("load weights from disk")
 
+    max_cached_checkpoints = max(0, int(getattr(opts, 'sd_checkpoints_limit', 1) or 0))
+    if max_cached_checkpoints <= 0:
+        return res
+
+    checkpoints_loaded[checkpoint_info] = res
+    checkpoints_loaded.move_to_end(checkpoint_info)
+
+    while len(checkpoints_loaded) > max_cached_checkpoints:
+        evicted_checkpoint_info, _ = checkpoints_loaded.popitem(last=False)
+        print(f"Evicted weights [{evicted_checkpoint_info.shorthash}] from RAM cache")
+
     return res
 
 
@@ -397,6 +408,7 @@ class SdModelData:
         self.sd_model = FakeInitialModel()
         self.forge_loading_parameters = {}
         self.forge_hash = ''
+        self.forge_cpu_cache = collections.OrderedDict()
 
     def get_sd_model(self):
         return self.sd_model
@@ -450,6 +462,8 @@ def reload_model_weights(sd_model=None, info=None, forced_reload=False):
 
 def unload_model_weights(sd_model=None, info=None):
     memory_management.unload_all_models()
+    model_data.forge_cpu_cache.clear()
+    checkpoints_loaded.clear()
     return
 
 
@@ -469,6 +483,53 @@ def apply_token_merging(sd_model, token_merging_ratio):
     return
 
 
+def forge_cpu_cache_enabled():
+    # Backward-compatible name: this cache stores full model objects.
+    # Whether non-active models stay in CPU or can stay on device is controlled separately
+    # by sd_checkpoints_keep_in_cpu.
+    return int(getattr(opts, 'sd_checkpoints_limit', 1) or 1) > 1
+
+
+def keep_only_one_model_on_device():
+    return bool(getattr(opts, 'sd_checkpoints_keep_in_cpu', True))
+
+
+def forge_cpu_cache_limit():
+    return max(1, int(getattr(opts, 'sd_checkpoints_limit', 1) or 1))
+
+
+def remember_forge_model_in_cpu_cache(cache_key, sd_model):
+    if not forge_cpu_cache_enabled():
+        model_data.forge_cpu_cache.clear()
+        return
+
+    if not cache_key or sd_model is None or isinstance(sd_model, FakeInitialModel):
+        return
+
+    model_data.forge_cpu_cache[cache_key] = sd_model
+    model_data.forge_cpu_cache.move_to_end(cache_key)
+
+    while len(model_data.forge_cpu_cache) > forge_cpu_cache_limit():
+        evicted_key = next((k for k in model_data.forge_cpu_cache.keys() if k != cache_key), None)
+        if evicted_key is None:
+            break
+        evicted_model = model_data.forge_cpu_cache.pop(evicted_key)
+        print(f"Evicted model from CPU cache: {evicted_key}")
+        del evicted_model
+        gc.collect()
+
+
+def get_forge_model_from_cpu_cache(cache_key):
+    if not forge_cpu_cache_enabled():
+        model_data.forge_cpu_cache.clear()
+        return None
+
+    cached_model = model_data.forge_cpu_cache.get(cache_key)
+    if cached_model is not None:
+        model_data.forge_cpu_cache.move_to_end(cache_key)
+    return cached_model
+
+
 @torch.inference_mode()
 def forge_model_reload():
     current_hash = str(model_data.forge_loading_parameters)
@@ -476,15 +537,41 @@ def forge_model_reload():
     if model_data.forge_hash == current_hash:
         return model_data.sd_model, False
 
+    cached_sd_model = get_forge_model_from_cpu_cache(current_hash)
+    should_unload_models_on_switch = keep_only_one_model_on_device() or not forge_cpu_cache_enabled()
+    if cached_sd_model is not None:
+        cache_mode = "CPU cache" if keep_only_one_model_on_device() else "model cache"
+        print(f'Loading Model from {cache_mode}: ' + str(model_data.forge_loading_parameters))
+
+        if model_data.sd_model and model_data.sd_model is not cached_sd_model:
+            remember_forge_model_in_cpu_cache(model_data.forge_hash, model_data.sd_model)
+            if should_unload_models_on_switch:
+                memory_management.unload_all_models()
+                memory_management.soft_empty_cache()
+                gc.collect()
+            else:
+                memory_management.soft_empty_cache()
+
+        model_data.set_sd_model(cached_sd_model)
+        model_data.forge_hash = current_hash
+        shared.opts.data["sd_checkpoint_hash"] = cached_sd_model.sd_checkpoint_info.sha256
+        return cached_sd_model, True
+
     print('Loading Model: ' + str(model_data.forge_loading_parameters))
 
     timer = Timer()
+    previous_sd_model = model_data.sd_model
+    previous_forge_hash = model_data.forge_hash
 
     if model_data.sd_model:
+        remember_forge_model_in_cpu_cache(model_data.forge_hash, model_data.sd_model)
         model_data.sd_model = None
-        memory_management.unload_all_models()
-        memory_management.soft_empty_cache()
-        gc.collect()
+        if should_unload_models_on_switch:
+            memory_management.unload_all_models()
+            memory_management.soft_empty_cache()
+            gc.collect()
+        else:
+            memory_management.soft_empty_cache()
 
     timer.record("unload existing model")
 
@@ -493,15 +580,54 @@ def forge_model_reload():
     if checkpoint_info is None:
         raise ValueError('You do not have any model! Please download at least one model in [models/Stable-diffusion].')
 
-    state_dict = checkpoint_info.filename
     additional_state_dicts = model_data.forge_loading_parameters.get('additional_modules', [])
 
-    timer.record("cache state dict")
+    def _load_model_with_cache_fallback(state_dict):
+        try:
+            model = forge_loader(state_dict, additional_state_dicts=additional_state_dicts, source_path=checkpoint_info.filename)
+            if model is None:
+                raise ValueError("Failed to recognize model type! (forge_loader returned None)")
+            return model
+        except ValueError as e:
+            if "Failed to recognize model type!" not in str(e):
+                raise
 
-    dynamic_args['forge_unet_storage_dtype'] = model_data.forge_loading_parameters.get('unet_storage_dtype', None)
-    dynamic_args['embedding_dir'] = cmd_opts.embeddings_dir
-    dynamic_args['emphasis_name'] = opts.emphasis
-    sd_model = forge_loader(state_dict, additional_state_dicts=additional_state_dicts)
+            # Always evict this checkpoint's RAM cache and retry from disk once.
+            checkpoints_loaded.pop(checkpoint_info, None)
+            print("Model type detection failed; evicted checkpoint cache entry and retrying from disk.")
+            fresh_state_dict = load_torch_file(checkpoint_info.filename)
+            if isinstance(fresh_state_dict, dict):
+                fresh_state_dict = dict(fresh_state_dict)
+
+            model = forge_loader(fresh_state_dict, additional_state_dicts=additional_state_dicts, source_path=checkpoint_info.filename)
+            if model is None:
+                raise ValueError("Failed to recognize model type! (forge_loader returned None)")
+            return model
+
+    try:
+        state_dict = get_checkpoint_state_dict(checkpoint_info, timer)
+        if isinstance(state_dict, dict):
+            # forge_loader/split_state_dict performs destructive key transforms;
+            # keep RAM checkpoint cache immutable across reloads/switches.
+            state_dict = dict(state_dict)
+
+        timer.record("cache state dict")
+
+        dynamic_args['forge_unet_storage_dtype'] = model_data.forge_loading_parameters.get('unet_storage_dtype', None)
+        dynamic_args['embedding_dir'] = cmd_opts.embeddings_dir
+        dynamic_args['emphasis_name'] = opts.emphasis
+        sd_model = _load_model_with_cache_fallback(state_dict)
+    except Exception:
+        # Keep runtime stable after load failure (for example after interrupt+switch).
+        if previous_sd_model is not None:
+            model_data.set_sd_model(previous_sd_model)
+            model_data.forge_hash = previous_forge_hash
+            prev_info = getattr(previous_sd_model, "sd_checkpoint_info", None)
+            if prev_info is not None:
+                shared.opts.data["sd_checkpoint_hash"] = prev_info.sha256
+            print("Model reload failed; restored previous model.")
+        raise
+
     timer.record("forge model load")
 
     sd_model.extra_generation_params = {}
@@ -514,6 +640,7 @@ def forge_model_reload():
     shared.opts.data["sd_checkpoint_hash"] = checkpoint_info.sha256
 
     model_data.set_sd_model(sd_model)
+    remember_forge_model_in_cpu_cache(current_hash, sd_model)
 
     script_callbacks.model_loaded_callback(sd_model)
 

@@ -2,12 +2,17 @@ import datetime
 import mimetypes
 import os
 import sys
+import time
 from functools import reduce
 import warnings
 from contextlib import ExitStack
+from urllib.parse import urlparse
 
 import gradio as gr
+import gradio.blocks
+import gradio.networking
 import gradio.utils
+import httpx
 from gradio.components.image_editor import Brush
 from PIL import Image, PngImagePlugin  # noqa: F401
 from modules.call_queue import wrap_gradio_gpu_call, wrap_queued_call, wrap_gradio_call, wrap_gradio_call_no_job # noqa: F401
@@ -48,6 +53,78 @@ if not cmd_opts.share and not cmd_opts.listen:
     # fix gradio phoning home
     gradio.utils.version_check = lambda: None
     gradio.utils.get_local_ip_address = lambda: '127.0.0.1'
+
+
+_gradio_local_hosts = {"127.0.0.1", "localhost", "0.0.0.0"}
+
+
+def _is_gradio_local_url(url) -> bool:
+    return (urlparse(str(url)).hostname or "") in _gradio_local_hosts
+
+
+def _request_local_gradio_url(method: str, url, **kwargs):
+    kwargs = dict(kwargs)
+    timeout = kwargs.pop("timeout", 3)
+    follow_redirects = kwargs.pop("follow_redirects", False)
+    transport = httpx.HTTPTransport(retries=0)
+
+    with httpx.Client(
+        transport=transport,
+        follow_redirects=follow_redirects,
+        timeout=timeout,
+        trust_env=False,
+        verify=kwargs.pop("verify", True),
+    ) as client:
+        return client.request(method, url, **kwargs)
+
+
+def _patch_gradio_localhost_probe():
+    original_url_ok = gradio.networking.url_ok
+    original_httpx_get = gradio.blocks.httpx.get
+
+    def patched_url_ok(url: str) -> bool:
+        if not _is_gradio_local_url(url):
+            return original_url_ok(url)
+
+        for _ in range(10):
+            for method in ("HEAD", "GET"):
+                try:
+                    response = _request_local_gradio_url(method, url, verify=False)
+                except (ConnectionError, httpx.HTTPError):
+                    continue
+
+                if response.status_code in {200, 204, 301, 302, 307, 308, 401, 405}:
+                    return True
+
+            time.sleep(0.5)
+
+        return False
+
+    def patched_httpx_get(url, *args, **kwargs):
+        if args or not _is_gradio_local_url(url):
+            return original_httpx_get(url, *args, **kwargs)
+
+        request_url = str(url)
+        is_startup_probe = request_url.rstrip("/").endswith("/startup-events")
+
+        try:
+            if is_startup_probe and kwargs.get("timeout") is None:
+                kwargs = dict(kwargs)
+                kwargs["timeout"] = 5
+
+            return _request_local_gradio_url("GET", url, **kwargs)
+        except httpx.HTTPError:
+            if not is_startup_probe:
+                raise
+
+            # Clash TUN can intercept this self-probe; let startup continue.
+            return httpx.Response(200, request=httpx.Request("GET", request_url), content=b"true")
+
+    gradio.networking.url_ok = patched_url_ok
+    gradio.blocks.httpx.get = patched_httpx_get
+
+
+_patch_gradio_localhost_probe()
 
 if cmd_opts.ngrok is not None:
     import modules.ngrok as ngrok
@@ -249,6 +326,17 @@ def create_output_panel(tabname, outdir, toprow=None):
     return ui_common.create_output_panel(tabname, outdir, toprow)
 
 
+def negative_prompt_interactivity_for_cfg(cfg_scale):
+    if main_entry.normalize_forge_preset(shared.opts.forge_preset) == 'lumina':
+        return gr.update(interactive=True)
+
+    checkpoint_name = getattr(shared.opts, "sd_model_checkpoint", None)
+    if main_entry.is_lumina_checkpoint_name(checkpoint_name):
+        return gr.update(interactive=True)
+
+    return gr.update(interactive=(cfg_scale != 1))
+
+
 def ordered_ui_categories():
     user_order = {x.strip(): i * 2 + 1 for i, x in enumerate(shared.opts.ui_reorder_list)}
 
@@ -321,7 +409,7 @@ def create_ui():
                         with gr.Row():
                             distilled_cfg_scale = gr.Slider(minimum=0.0, maximum=30.0, step=0.1, label='Distilled CFG Scale', value=3.5, elem_id="txt2img_distilled_cfg_scale")
                             cfg_scale = gr.Slider(minimum=1.0, maximum=30.0, step=0.1, label='CFG Scale', value=7.0, elem_id="txt2img_cfg_scale")
-                            cfg_scale.change(lambda x: gr.update(interactive=(x != 1)), inputs=[cfg_scale], outputs=[toprow.negative_prompt], queue=False, show_progress=False)
+                            cfg_scale.change(negative_prompt_interactivity_for_cfg, inputs=[cfg_scale], outputs=[toprow.negative_prompt], queue=False, show_progress=False)
 
                     elif category == "checkboxes":
                         with FormRow(elem_classes="checkboxes-row", variant="compact"):
@@ -381,7 +469,7 @@ def create_ui():
                                     with gr.Column():
                                         hr_negative_prompt = gr.Textbox(label="Hires negative prompt", elem_id="hires_neg_prompt", show_label=False, lines=3, placeholder="Negative prompt for hires fix pass.\nLeave empty to use the same negative prompt as in first pass.", elem_classes=["prompt"])
 
-                                hr_cfg.change(lambda x: gr.update(interactive=(x != 1)), inputs=[hr_cfg], outputs=[hr_negative_prompt], queue=False, show_progress=False)
+                                hr_cfg.change(negative_prompt_interactivity_for_cfg, inputs=[hr_cfg], outputs=[hr_negative_prompt], queue=False, show_progress=False)
 
                             scripts.scripts_txt2img.setup_ui_for_section(category)
 
@@ -715,7 +803,7 @@ def create_ui():
                             distilled_cfg_scale = gr.Slider(minimum=0.0, maximum=30.0, step=0.1, label='Distilled CFG Scale', value=3.5, elem_id="img2img_distilled_cfg_scale")
                             cfg_scale = gr.Slider(minimum=1.0, maximum=30.0, step=0.1, label='CFG Scale', value=7.0, elem_id="img2img_cfg_scale")
                             image_cfg_scale = gr.Slider(minimum=0, maximum=3.0, step=0.05, label='Image CFG Scale', value=1.5, elem_id="img2img_image_cfg_scale", visible=False)
-                            cfg_scale.change(lambda x: gr.update(interactive=(x != 1)), inputs=[cfg_scale], outputs=[toprow.negative_prompt], queue=False, show_progress=False)
+                            cfg_scale.change(negative_prompt_interactivity_for_cfg, inputs=[cfg_scale], outputs=[toprow.negative_prompt], queue=False, show_progress=False)
 
                     elif category == "checkboxes":
                         with FormRow(elem_classes="checkboxes-row", variant="compact"):

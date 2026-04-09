@@ -55,3 +55,9 @@ trace.json
 /test/results.xml
 coverage.xml
 **/tests/**/expectations
+*.log
+*.out
+*.err
+*.bak
+*.lnk
+tmp_*/

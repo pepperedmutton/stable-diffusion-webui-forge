@@ -1,0 +1,11 @@
+{
+  "dim": 96,
+  "z_dim": 16,
+  "dim_mult": [1, 2, 4, 4],
+  "num_res_blocks": 2,
+  "attn_scales": [],
+  "temperal_downsample": [false, true, true],
+  "image_channels": 3,
+  "conv_out_channels": 3,
+  "dropout": 0.0
+}

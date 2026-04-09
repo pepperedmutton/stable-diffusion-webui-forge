@@ -1,0 +1,10 @@
+{
+  "_class_name": "AnimaPipeline",
+  "_diffusers_version": "0.31.0",
+  "scheduler": ["diffusers", "FlowMatchEulerDiscreteScheduler"],
+  "text_encoder": ["transformers", "Gemma2Model"],
+  "tokenizer": ["transformers", "Qwen2Tokenizer"],
+  "tokenizer_2": ["transformers", "T5TokenizerFast"],
+  "transformer": ["diffusers", "AnimaTransformer2DModel"],
+  "vae": ["diffusers", "WanVAEModel"]
+}

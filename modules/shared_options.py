@@ -198,6 +198,12 @@ options_templates.update(options_section(('sd3', "Stable Diffusion 3", "sd"), {
     "sd3_enable_t5": OptionInfo(False, "Enable T5").info("load T5 text encoder; increases VRAM use by a lot, potentially improving quality of generation; requires model reload to apply"),
 }))
 
+options_templates.update(options_section(('lumina', "Lumina", "sd"), {
+    "lumina_max_sequence_length": OptionInfo(256, "Maximum sequence length", gr.Slider, {"minimum": 32, "maximum": 512, "step": 1}).info("includes the automatic Lumina prompt prefix tokens"),
+    "lumina_sampler_shift": OptionInfo(4.5, "Sampler shift", gr.Slider, {"minimum": 0.1, "maximum": 12.0, "step": 0.1}).info("ComfyUI Lumina workflow default uses AuraFlow-style shift 4.5"),
+    "lumina_cfg_normalization": OptionInfo(True, "Normalize CFG output").info("matches the official Lumina2 classifier-free guidance behavior"),
+}))
+
 options_templates.update(options_section(('vae', "VAE", "sd"), {
     "sd_vae_explanation": OptionHTML("""
 <abbr title='Variational autoencoder'>VAE</abbr> is a neural network that transforms a standard <abbr title='red/green/blue'>RGB</abbr>

@@ -88,6 +88,14 @@ class ConditionConstant(Condition):
         return self.cond
 
 
+class ConditionID(Condition):
+    def process_cond(self, batch_size, device, **kwargs):
+        data = repeat_to_batch_size(self.cond, batch_size).to(device)
+        if data.dtype not in (torch.int32, torch.int64):
+            data = data.to(dtype=torch.long)
+        return self._copy_with(data)
+
+
 def compile_conditions(cond):
     if cond is None:
         return None
@@ -102,19 +110,32 @@ def compile_conditions(cond):
         return [result, ]
 
     cross_attn = cond['crossattn']
-    pooled_output = cond['vector']
 
     result = dict(
         cross_attn=cross_attn,
-        pooled_output=pooled_output,
         model_conds=dict(
             c_crossattn=ConditionCrossAttn(cross_attn),
-            y=Condition(pooled_output)
         )
     )
 
+    pooled_output = cond.get('vector', None)
+    if pooled_output is not None:
+        result['pooled_output'] = pooled_output
+        result['model_conds']['y'] = Condition(pooled_output)
+
+    attention_mask = cond.get('attention_mask', None)
+    if attention_mask is not None:
+        result['attention_mask'] = attention_mask
+        result['model_conds']['attention_mask'] = Condition(attention_mask)
+
     if 'guidance' in cond:
         result['model_conds']['guidance'] = Condition(cond['guidance'])
+
+    if 't5xxl_ids' in cond:
+        result['model_conds']['t5xxl_ids'] = ConditionID(cond['t5xxl_ids'])
+
+    if 't5xxl_weights' in cond:
+        result['model_conds']['t5xxl_weights'] = Condition(cond['t5xxl_weights'])
 
     return [result, ]
 

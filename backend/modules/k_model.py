@@ -38,7 +38,9 @@ class KModel(torch.nn.Module):
         for o in kwargs:
             extra = kwargs[o]
             if hasattr(extra, "dtype"):
-                if extra.dtype != torch.int and extra.dtype != torch.long:
+                if o.endswith("_ids"):
+                    extra = extra.to(dtype=torch.long)
+                elif extra.dtype != torch.int and extra.dtype != torch.long and extra.dtype != torch.int32 and extra.dtype != torch.int64:
                     extra = extra.to(dtype)
             extra_conds[o] = extra
 

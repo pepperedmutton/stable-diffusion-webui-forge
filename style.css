@@ -1703,3 +1703,19 @@ body.resizing .resize-handle {
 .forge_space_btn{
     min-width: 0 !important;
 }
+
+body.forge-preset-lumina #txt2img_distilled_cfg_scale,
+body.forge-preset-lumina #img2img_distilled_cfg_scale,
+body.forge-preset-lumina #txt2img_hr,
+body.forge-preset-lumina #txt2img_refiner_enable,
+body.forge-preset-lumina #txt2img_refiner_enable-checkbox,
+body.forge-preset-lumina #img2img_refiner_enable,
+body.forge-preset-lumina #img2img_refiner_enable-checkbox,
+body.forge-preset-lumina #txt2img_hires_fix_row1,
+body.forge-preset-lumina #txt2img_hires_fix_row2,
+body.forge-preset-lumina #txt2img_hires_fix_row_cfg,
+body.forge-preset-lumina #txt2img_hires_fix_row3,
+body.forge-preset-lumina #txt2img_hires_fix_row3b,
+body.forge-preset-lumina #txt2img_hires_fix_row4 {
+    display: none !important;
+}

@@ -98,7 +98,7 @@ def webui_worker():
 
         from modules_forge.forge_canvas.canvas import canvas_js_root_path
 
-        app, local_url, share_url = shared.demo.launch(
+        launch_kwargs = dict(
             share=cmd_opts.share,
             server_name=initialize_util.gradio_server_name(),
             server_port=cmd_opts.port,
@@ -117,6 +117,15 @@ def webui_worker():
             },
             root_path=f"/{cmd_opts.subpath}" if cmd_opts.subpath else "",
         )
+
+        try:
+            app, local_url, share_url = shared.demo.launch(**launch_kwargs)
+        except ValueError as e:
+            if "localhost is not accessible" not in str(e):
+                raise
+
+            print("Gradio localhost probe failed; retrying launch with frontend probe disabled.")
+            app, local_url, share_url = shared.demo.launch(_frontend=False, **launch_kwargs)
 
         startup_timer.record("gradio launch")
 
