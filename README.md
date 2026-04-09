@@ -8,6 +8,47 @@ Forge is currently based on SD-WebUI 1.10.1 at [this commit](https://github.com/
 
 News are moved to this link: [Click here to see the News section](https://github.com/lllyasviel/stable-diffusion-webui-forge/blob/main/NEWS.md)
 
+## Fork-Specific Features (This Repository)
+
+This fork focuses on preset-driven support for newer model families in the top-left `UI` selector:
+
+- `qwen`
+- `anima`
+- `lumina`
+- `xl`
+
+The preset also updates default sampler/settings behavior and which extra modules are loaded.
+
+### Model Files Required For First-Time Setup
+
+Put model files in these folders:
+
+- Checkpoints: `models/Stable-diffusion/`
+- Text encoders: `models/text_encoder/`
+- VAE files: `models/VAE/`
+
+The following filenames are the coded defaults used by this fork:
+
+| UI preset | Required checkpoint (models/Stable-diffusion) | Required additional modules | Notes |
+|---|---|---|---|
+| `qwen` | `qwen_image_fp8_e4m3fn.safetensors` | `models/text_encoder/qwen_2.5_vl_7b_fp8_scaled.safetensors` and `models/VAE/qwen_image_vae.safetensors` | If checkpoint name contains `qwen`, this profile is auto-detected. |
+| `anima` | `anima_preview_2_base.safetensors` | `models/text_encoder/anima_text_encoder.safetensors` and `models/VAE/anima_vae.safetensors` | If checkpoint name contains `anima`, this profile is auto-detected. |
+| `lumina` | Any Lumina-compatible checkpoint | None (empty additional modules by default) | This fork adds Lumina settings: max sequence length, sampler shift, CFG normalization. |
+| `xl` | `JANKUTrainedNoobaiRouwei_v69.safetensors` | `models/VAE/pppanimixVAE_il.safetensors` | Convenience preset for quick switching from Lumina/Qwen/Anima workflows. |
+
+### First Run Checklist
+
+1. Download and place required files in the paths above.
+2. Start Forge and select a preset from the top-left `UI` radio group.
+3. In the top bar, verify `Checkpoint` and `VAE/Text Encoder` entries are resolved correctly.
+4. If you use custom filenames, manually select them once; this fork stores per-preset selections for `qwen` and `anima`.
+
+### Notes
+
+- This fork bundles local pipeline config files under `backend/huggingface/...`, so users mainly need model weight files.
+- Lumina checkpoint names containing `lumina` or `neta` are treated as Lumina-family names for UI/model-loading behavior.
+- The old `sd`/`all` preset naming is normalized to `qwen` in this fork.
+
 # Quick List
 
 [Gradio 4 UI Must Read (TLDR: You need to use RIGHT MOUSE BUTTON to move canvas!)](https://github.com/lllyasviel/stable-diffusion-webui-forge/discussions/853)
