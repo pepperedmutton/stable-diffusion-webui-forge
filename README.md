@@ -8,6 +8,8 @@ Forge is currently based on SD-WebUI 1.10.1 at [this commit](https://github.com/
 
 News are moved to this link: [Click here to see the News section](https://github.com/lllyasviel/stable-diffusion-webui-forge/blob/main/NEWS.md)
 
+Chinese README: [README.zh-CN.md](README.zh-CN.md)
+
 ## Fork-Specific Features (This Repository)
 
 This fork focuses on preset-driven support for newer model families in the top-left `UI` selector:
@@ -29,12 +31,12 @@ Put model files in these folders:
 
 The following filenames are the coded defaults used by this fork:
 
-| UI preset | Required checkpoint (models/Stable-diffusion) | Required additional modules | Notes |
-|---|---|---|---|
-| `qwen` | `qwen_image_fp8_e4m3fn.safetensors` | `models/text_encoder/qwen_2.5_vl_7b_fp8_scaled.safetensors` and `models/VAE/qwen_image_vae.safetensors` | If checkpoint name contains `qwen`, this profile is auto-detected. |
-| `anima` | `anima_preview_2_base.safetensors` | `models/text_encoder/anima_text_encoder.safetensors` and `models/VAE/anima_vae.safetensors` | If checkpoint name contains `anima`, this profile is auto-detected. |
-| `lumina` | Any Lumina-compatible checkpoint | None (empty additional modules by default) | This fork adds Lumina settings: max sequence length, sampler shift, CFG normalization. |
-| `xl` | `JANKUTrainedNoobaiRouwei_v69.safetensors` | `models/VAE/pppanimixVAE_il.safetensors` | Convenience preset for quick switching from Lumina/Qwen/Anima workflows. |
+| UI preset | Required checkpoint (models/Stable-diffusion) | Required additional modules | Download source links | Notes |
+|---|---|---|---|---|
+| `qwen` | `qwen_image_fp8_e4m3fn.safetensors` | `models/text_encoder/qwen_2.5_vl_7b_fp8_scaled.safetensors` and `models/VAE/qwen_image_vae.safetensors` | [Comfy-Org/Qwen-Image_ComfyUI](https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/tree/main)<br>[checkpoint](https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_fp8_e4m3fn.safetensors)<br>[text encoder](https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors)<br>[VAE](https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/vae/qwen_image_vae.safetensors) | If checkpoint name contains `qwen`, this profile is auto-detected. |
+| `anima` | `anima_preview_2_base.safetensors` | `models/text_encoder/anima_text_encoder.safetensors` and `models/VAE/anima_vae.safetensors` | [circlestone-labs/Anima](https://huggingface.co/circlestone-labs/Anima/tree/main/split_files)<br>[diffusion model folder](https://huggingface.co/circlestone-labs/Anima/tree/main/split_files/diffusion_models)<br>[text encoder folder](https://huggingface.co/circlestone-labs/Anima/tree/main/split_files/text_encoders)<br>[VAE folder](https://huggingface.co/circlestone-labs/Anima/tree/main/split_files/vae) | If checkpoint name contains `anima`, this profile is auto-detected. The upstream filenames may differ; see rename notes below. |
+| `lumina` | Any Lumina-compatible checkpoint | None (empty additional modules by default) | [Alpha-VLLM/Lumina-Image-2.0](https://huggingface.co/Alpha-VLLM/Lumina-Image-2.0)<br>[Comfy repackaged all-in-one](https://huggingface.co/Comfy-Org/Lumina_Image_2.0_Repackaged/blob/main/all_in_one/lumina_2.safetensors)<br>[Neta-Lumina](https://huggingface.co/neta-art/Neta-Lumina) | This fork adds Lumina settings: max sequence length, sampler shift, CFG normalization. |
+| `xl` | `JANKUTrainedNoobaiRouwei_v69.safetensors` | `models/VAE/pppanimixVAE_il.safetensors` | [Civitai search (checkpoint)](https://civitai.com/search/models?query=JANKUTrainedNoobaiRouwei_v69)<br>[Civitai search (VAE)](https://civitai.com/search/models?query=pppanimix%20vae) | Community model names can change by version/uploader. |
 
 ### First Run Checklist
 
@@ -48,6 +50,10 @@ The following filenames are the coded defaults used by this fork:
 - This fork bundles local pipeline config files under `backend/huggingface/...`, so users mainly need model weight files.
 - Lumina checkpoint names containing `lumina` or `neta` are treated as Lumina-family names for UI/model-loading behavior.
 - The old `sd`/`all` preset naming is normalized to `qwen` in this fork.
+- For Anima files from `circlestone-labs/Anima`, map names as:
+  `anima-preview2.safetensors -> anima_preview_2_base.safetensors`,
+  `qwen_3_06b_base.safetensors -> anima_text_encoder.safetensors`,
+  `qwen_image_vae.safetensors -> anima_vae.safetensors`.
 
 # Quick List
 
