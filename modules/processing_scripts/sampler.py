@@ -46,9 +46,11 @@ class ScriptSampler(scripts.ScriptBuiltinUI):
             "lumina_i2i_scheduler":   shared.OptionInfo('Simple',       "img2img scheduler",    gr.Dropdown, {"choices": scheduler_names}),
         }))
         shared.options_templates.update(shared.options_section(('ui_xl', "UI defaults 'xl'", "ui"), {
-            "xl_t2i_sampler":     shared.OptionInfo('DPM++ 2M SDE', "txt2img sampler",      gr.Dropdown, {"choices": sampler_names}),
+            "xl_t2i_steps":       shared.OptionInfo(30,             "txt2img steps",        gr.Slider, {"minimum": 1, "maximum": 150, "step": 1}),
+            "xl_t2i_sampler":     shared.OptionInfo('Euler a',      "txt2img sampler",      gr.Dropdown, {"choices": sampler_names}),
             "xl_t2i_scheduler":   shared.OptionInfo('Karras',       "txt2img scheduler",    gr.Dropdown, {"choices": scheduler_names}),
-            "xl_i2i_sampler":     shared.OptionInfo('DPM++ 2M SDE', "img2img sampler",      gr.Dropdown, {"choices": sampler_names}),
+            "xl_i2i_steps":       shared.OptionInfo(30,             "img2img steps",        gr.Slider, {"minimum": 1, "maximum": 150, "step": 1}),
+            "xl_i2i_sampler":     shared.OptionInfo('Euler a',      "img2img sampler",      gr.Dropdown, {"choices": sampler_names}),
             "xl_i2i_scheduler":   shared.OptionInfo('Karras',       "img2img scheduler",    gr.Dropdown, {"choices": scheduler_names}),
         }))
         shared.options_templates.update(shared.options_section(('ui_flux', "UI defaults 'flux'", "ui"), {

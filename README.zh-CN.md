@@ -23,15 +23,15 @@
 | UI 预设 | 必需 checkpoint（`models/Stable-diffusion`） | 必需附加模块 | 下载来源 | 备注 |
 |---|---|---|---|---|
 | `qwen` | `qwen_image_fp8_e4m3fn.safetensors` | `models/text_encoder/qwen_2.5_vl_7b_fp8_scaled.safetensors` 和 `models/VAE/qwen_image_vae.safetensors` | [Comfy-Org/Qwen-Image_ComfyUI](https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/tree/main)<br>[checkpoint](https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_fp8_e4m3fn.safetensors)<br>[text encoder](https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors)<br>[VAE](https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/vae/qwen_image_vae.safetensors) | checkpoint 名含 `qwen` 会自动识别为 qwen 家族 |
-| `anima` | `anima_preview_2_base.safetensors` | `models/text_encoder/anima_text_encoder.safetensors` 和 `models/VAE/anima_vae.safetensors` | [circlestone-labs/Anima](https://huggingface.co/circlestone-labs/Anima/tree/main/split_files)<br>[diffusion model 目录](https://huggingface.co/circlestone-labs/Anima/tree/main/split_files/diffusion_models)<br>[text encoder 目录](https://huggingface.co/circlestone-labs/Anima/tree/main/split_files/text_encoders)<br>[VAE 目录](https://huggingface.co/circlestone-labs/Anima/tree/main/split_files/vae) | checkpoint 名含 `anima` 会自动识别；上游文件名可能与本 fork 默认名不同，见下方重命名说明 |
+| `anima` | `anima-base-v1.0.safetensors` | `models/text_encoder/anima_text_encoder.safetensors` 和 `models/VAE/anima_vae.safetensors` | [circlestone-labs/Anima](https://huggingface.co/circlestone-labs/Anima/tree/main/split_files)<br>[diffusion model 目录](https://huggingface.co/circlestone-labs/Anima/tree/main/split_files/diffusion_models)<br>[text encoder 目录](https://huggingface.co/circlestone-labs/Anima/tree/main/split_files/text_encoders)<br>[VAE 目录](https://huggingface.co/circlestone-labs/Anima/tree/main/split_files/vae) | checkpoint 名含 `anima` 会自动识别；上游文件名可能与本 fork 默认名不同，见下方重命名说明 |
 | `lumina` | 任意兼容 Lumina 的 checkpoint | 默认不需要附加模块 | [Alpha-VLLM/Lumina-Image-2.0](https://huggingface.co/Alpha-VLLM/Lumina-Image-2.0)<br>[Comfy repackaged all-in-one](https://huggingface.co/Comfy-Org/Lumina_Image_2.0_Repackaged/blob/main/all_in_one/lumina_2.safetensors)<br>[Neta-Lumina](https://huggingface.co/neta-art/Neta-Lumina) | 启用 lumina 预设后会使用 Lumina 专用参数逻辑 |
-| `xl` | `JANKUTrainedNoobaiRouwei_v69.safetensors` | `models/VAE/pppanimixVAE_il.safetensors` | [Civitai 搜索（checkpoint）](https://civitai.com/search/models?query=JANKUTrainedNoobaiRouwei_v69)<br>[Civitai 搜索（VAE）](https://civitai.com/search/models?query=pppanimix%20vae) | 社区模型文件名可能因发布者或版本略有变化 |
+| `xl` | `novaAnimeXL_ilV170.safetensors` | `models/VAE/pppanimixVAE_il.safetensors` | [Civitai 搜索（checkpoint）](https://civitai.com/search/models?query=novaAnimeXL)<br>[Civitai 搜索（VAE）](https://civitai.com/search/models?query=pppanimix%20vae) | 社区模型文件名可能因发布者或版本略有变化 |
 
 ## Anima 文件重命名对照
 
 如果你从 `circlestone-labs/Anima` 直接下载，请按下面映射重命名为本 fork 默认名：
 
-- `anima-preview2.safetensors` -> `anima_preview_2_base.safetensors`
+- `anima-base-v1.0.safetensors` -> `anima-base-v1.0.safetensors`
 - `qwen_3_06b_base.safetensors` -> `anima_text_encoder.safetensors`
 - `qwen_image_vae.safetensors` -> `anima_vae.safetensors`
 
@@ -41,4 +41,3 @@
 2. 启动 WebUI 后，在左上角选择对应 `UI` 预设。
 3. 检查顶栏中的 `Checkpoint` 与附加模块是否匹配你安装的文件。
 4. 如你使用了自定义文件名，手动选择一次后，`qwen/anima` 的选择会按预设保存。
-

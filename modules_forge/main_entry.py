@@ -48,11 +48,12 @@ QWEN_DEFAULT_MODULES = [
     os.path.abspath(os.path.join(paths.models_path, "text_encoder", "qwen_2.5_vl_7b_fp8_scaled.safetensors")),
     os.path.abspath(os.path.join(paths.models_path, "VAE", "qwen_image_vae.safetensors")),
 ]
-XL_DEFAULT_CHECKPOINT = "JANKUTrainedNoobaiRouwei_v69.safetensors"
+XL_DEFAULT_CHECKPOINT = "novaAnimeXL_ilV170.safetensors"
 XL_DEFAULT_MODULES = [
     os.path.abspath(os.path.join(paths.models_path, "VAE", "pppanimixVAE_il.safetensors")),
 ]
-ANIMA_DEFAULT_CHECKPOINT = "anima_preview_2_base.safetensors"
+XL_DEFAULT_SAMPLER = "Euler a"
+ANIMA_DEFAULT_CHECKPOINT = "anima-base-v1.0.safetensors"
 ANIMA_DEFAULT_MODULES = [
     os.path.abspath(os.path.join(paths.models_path, "text_encoder", "anima_text_encoder.safetensors")),
     os.path.abspath(os.path.join(paths.models_path, "VAE", "anima_vae.safetensors")),
@@ -197,6 +198,22 @@ def is_netayume_checkpoint_name(value):
 def is_novaanime_checkpoint_name(value):
     text = normalize_checkpoint_text(value)
     return "novaanime" in text
+
+
+def is_xl_checkpoint_name(value):
+    text = normalize_checkpoint_text(value)
+    if not text or is_qwen_checkpoint_name(value) or is_anima_checkpoint_name(value) or is_lumina_checkpoint_name(value):
+        return False
+
+    return any(keyword in text for keyword in [
+        "xl",
+        "sdxl",
+        "illustrious",
+        "noobai",
+        "janku",
+        "novaanime",
+        "wai",
+    ])
 
 
 def find_checkpoint_name_by_keywords(*keywords):
@@ -463,9 +480,15 @@ def checkpoint_change(ckpt_name: str, preset=None, save=True, refresh=True):
     from modules import sd_models
 
     """ checkpoint name can be a number of valid aliases. Returns True if checkpoint changed. """
+    sampler_changed = False
+    if normalize_forge_preset(preset) == 'xl':
+        sampler_changed = sync_xl_sampler_defaults(save=False)
+
     new_ckpt_info = sd_models.get_closet_checkpoint_match(ckpt_name)
     current_ckpt_info = sd_models.get_closet_checkpoint_match(shared.opts.data.get('sd_model_checkpoint', ''))
     if new_ckpt_info == current_ckpt_info:
+        if save and sampler_changed:
+            shared.opts.save(shared.config_filename)
         return False
 
     shared.opts.set('sd_model_checkpoint', ckpt_name)
@@ -479,6 +502,46 @@ def checkpoint_change(ckpt_name: str, preset=None, save=True, refresh=True):
     if refresh:
         refresh_model_loading_parameters()
     return True
+
+
+def sync_xl_sampler_defaults(save=True):
+    changed = False
+    for key in ("xl_t2i_sampler", "xl_i2i_sampler"):
+        if shared.opts.data.get(key) != XL_DEFAULT_SAMPLER:
+            shared.opts.set(key, XL_DEFAULT_SAMPLER)
+            changed = True
+
+    if save and changed:
+        shared.opts.save(shared.config_filename)
+
+    return changed
+
+
+def should_apply_xl_sampler_for_checkpoint(ckpt_name, preset=None):
+    preset = normalize_forge_preset(preset)
+    return preset == 'xl' or is_xl_checkpoint_name(ckpt_name)
+
+
+def on_checkpoint_sampler_ui_sync(ckpt_name, preset=None):
+    if not should_apply_xl_sampler_for_checkpoint(ckpt_name, preset):
+        return [gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update()]
+
+    shared.opts.set('forge_preset', 'xl')
+    shared.opts.set('xl_t2i_steps', 30)
+    shared.opts.set('xl_i2i_steps', 30)
+    sync_xl_sampler_defaults(save=False)
+    modules_change(get_default_xl_modules(), preset='xl', save=False, refresh=False)
+    shared.opts.save(shared.config_filename)
+    refresh_model_loading_parameters()
+
+    return [
+        gr.update(value='xl'),
+        gr.update(visible=True, value=[os.path.basename(x) for x in shared.opts.forge_additional_modules]),
+        gr.update(value=30),
+        gr.update(value=30),
+        gr.update(value=XL_DEFAULT_SAMPLER),
+        gr.update(value=XL_DEFAULT_SAMPLER),
+    ]
 
 
 def modules_change(module_values: list, preset=None, save=True, refresh=True) -> bool:
@@ -565,6 +628,13 @@ def forge_main_entry():
     preset_inputs = [ui_forge_preset, ui_txt2img_width, ui_img2img_width, ui_txt2img_height, ui_img2img_height]
     ui_forge_preset.change(on_preset_change, inputs=preset_inputs, outputs=output_targets, queue=False, show_progress=False)
     ui_forge_preset.change(js="clickLoraRefresh", fn=None, queue=False, show_progress=False)
+    ui_checkpoint.change(
+        on_checkpoint_sampler_ui_sync,
+        inputs=[ui_checkpoint, ui_forge_preset],
+        outputs=[ui_forge_preset, ui_vae, ui_txt2img_steps, ui_img2img_steps, ui_txt2img_sampler, ui_img2img_sampler],
+        queue=False,
+        show_progress=False,
+    )
     Context.root_block.load(on_preset_change, inputs=preset_inputs, outputs=output_targets, queue=False, show_progress=False)
 
     refresh_model_loading_parameters()
@@ -732,6 +802,7 @@ def on_preset_change(
     if preset == 'xl':
         xl_checkpoint = XL_DEFAULT_CHECKPOINT
         xl_modules = get_default_xl_modules()
+        sync_xl_sampler_defaults(save=True)
 
         if sd_models.get_closet_checkpoint_match(xl_checkpoint) is not None:
             checkpoint_change(xl_checkpoint, save=True, refresh=False)
@@ -750,8 +821,8 @@ def on_preset_change(
             gr.update(visible=False, value='Queue'),                                    # ui_forge_async_loading
             gr.update(visible=False, value='CPU'),                                      # ui_forge_pin_shared_memory
             gr.update(visible=True, value=model_mem),                                   # ui_forge_inference_memory
-            gr.update(value=ui_settings_from_file_get("customscript/sampler.py/txt2img/Sampling steps/value", 20)), # ui_txt2img_steps
-            gr.update(value=ui_settings_from_file_get("customscript/sampler.py/img2img/Sampling steps/value", 20)), # ui_img2img_steps
+            gr.update(value=opt("xl_t2i_steps", 30)),                                # ui_txt2img_steps
+            gr.update(value=opt("xl_i2i_steps", 30)),                                # ui_img2img_steps
             gr.update(value=current_t2i_width),                                          # ui_txt2img_width
             gr.update(value=current_i2i_width),                                          # ui_img2img_width
             gr.update(value=current_t2i_height),                                         # ui_txt2img_height
@@ -760,8 +831,8 @@ def on_preset_change(
             gr.update(value=getattr(shared.opts, "xl_i2i_cfg", 5)),                     # ui_img2img_cfg
             gr.update(visible=False, value=3.5),                                        # ui_txt2img_distilled_cfg
             gr.update(visible=False, value=3.5),                                        # ui_img2img_distilled_cfg
-            gr.update(value=getattr(shared.opts, "xl_t2i_sampler", 'Euler a')),         # ui_txt2img_sampler
-            gr.update(value=getattr(shared.opts, "xl_i2i_sampler", 'Euler a')),         # ui_img2img_sampler
+            gr.update(value=XL_DEFAULT_SAMPLER),                                        # ui_txt2img_sampler
+            gr.update(value=XL_DEFAULT_SAMPLER),                                        # ui_img2img_sampler
             gr.update(value=getattr(shared.opts, "xl_t2i_scheduler", 'Automatic')),     # ui_txt2img_scheduler
             gr.update(value=getattr(shared.opts, "xl_i2i_scheduler", 'Automatic')),     # ui_img2img_scheduler
             gr.update(visible=True, value=getattr(shared.opts, "xl_t2i_hr_cfg", 5.0)),  # ui_txt2img_hr_cfg

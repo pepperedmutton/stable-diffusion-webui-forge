@@ -9,7 +9,7 @@ def register(options_templates, options_section, OptionInfo):
         "forge_checkpoint_qwen": OptionInfo('qwen_image_fp8_e4m3fn.safetensors'),
         "forge_additional_modules_qwen": OptionInfo([]),
         "forge_unet_storage_dtype_qwen": OptionInfo('Automatic'),
-        "forge_checkpoint_anima": OptionInfo('anima_preview_2_base.safetensors'),
+        "forge_checkpoint_anima": OptionInfo('anima-base-v1.0.safetensors'),
         "forge_additional_modules_anima": OptionInfo([]),
     }))
     options_templates.update(options_section(('ui_alternatives', "UI alternatives", "ui"), {
