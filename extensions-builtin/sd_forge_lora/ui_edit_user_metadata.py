@@ -123,10 +123,15 @@ class LoraUserMetadataEditor(ui_extra_networks_user_metadata.UserMetadataEditor)
 
         tags = build_tags(metadata)
         gradio_tags = [(tag, str(count)) for tag, count in tags[0:24]]
+        sd_version = str(item.get("sd_version", "")).replace("SdVersion.", "")
+        if not sd_version:
+            sd_version = str(item.get("sd_version_str", "")).replace("SdVersion.", "")
+        if sd_version not in {'Krea', 'SD1', 'SD2', 'SDXL', 'Flux', 'Unknown'}:
+            sd_version = 'Unknown'
 
         return [
             *values[0:5],
-            item.get("sd_version", "Unknown"),
+            sd_version,
             gr.HighlightedText.update(value=gradio_tags, visible=True if tags else False),
             user_metadata.get('activation text', ''),
             float(user_metadata.get('preferred weight', 0.0)),
@@ -158,7 +163,7 @@ class LoraUserMetadataEditor(ui_extra_networks_user_metadata.UserMetadataEditor)
         return ", ".join(sorted(res))
 
     def create_extra_default_items_in_left_column(self):
-        self.select_sd_version = gr.Radio(['SD1', 'SD2', 'SDXL', 'Flux', 'Unknown'], value='Unknown', label='Base model', interactive=True)
+        self.select_sd_version = gr.Radio(['Krea', 'SD1', 'SD2', 'SDXL', 'Flux', 'Unknown'], value='Unknown', label='Base model', interactive=True)
 
     def create_editor(self):
         self.create_default_editor_elems()

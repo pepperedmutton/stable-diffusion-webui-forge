@@ -234,8 +234,11 @@ def set_config(req: dict[str, Any], is_api=False, run_callbacks=True, save_confi
         if k == 'sd_model_checkpoint':
             if v is not None and v not in sd_models.checkpoint_aliases:
                 raise RuntimeError(f"model {v!r} not found")
-            checkpoint_changed = main_entry.checkpoint_change(v, save=False, refresh=False)
-            if checkpoint_changed:
+            target_preset = main_entry.infer_forge_preset_from_checkpoint(v)
+            if target_preset is not None:
+                shared.opts.set('forge_preset', target_preset, is_api=is_api, run_callbacks=False)
+            checkpoint_changed = main_entry.checkpoint_change(v, preset=target_preset, save=False, refresh=False)
+            if checkpoint_changed or target_preset is not None:
                 should_refresh_model_loading_params = True
         elif k == 'forge_additional_modules':
             modules_changed = main_entry.modules_change(v, save=False, refresh=False)

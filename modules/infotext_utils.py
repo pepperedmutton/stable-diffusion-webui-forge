@@ -157,7 +157,7 @@ def connect_paste_params_buttons():
         destination_height_component = next(iter([field for field, name in fields if name == "Size-2"] if fields else []), None)
 
         if binding.source_image_component and destination_image_component:
-            need_send_dementions = destination_width_component and binding.tabname != 'inpaint'
+            need_send_dementions = destination_width_component and binding.tabname not in {'inpaint', 'outpaint'}
             if isinstance(binding.source_image_component, gr.Gallery):
                 func = send_image_and_dimensions if need_send_dementions else image_from_url_text
                 jsfunc = "extract_image_from_gallery"
@@ -417,6 +417,11 @@ Steps: 20, Sampler: Euler a, CFG scale: 7, Seed: 965400086, Size: 512x512, Model
 
     infotext_versions.backcompat(res)
 
+    # Older Qwen 2.1 PNGs predate the precision-specific checkpoint names.
+    if (res.get("Model") == "Qwen-Image-2.1"
+            and res.get("Qwen runtime") == "Diffusers BF16 / CPU offload"):
+        res["Model"] = "Qwen-Image-2.1-BF16"
+
     for key in skip_fields:
         res.pop(key, None)
 
@@ -633,9 +638,10 @@ def connect_paste(button, paste_fields, input_comp, override_settings_component,
         outputs=[x[0] for x in paste_fields],
         show_progress=False,
     )
+    prompt_tabname = "img2img" if tabname in {"inpaint", "outpaint"} else tabname
     button.click(
         fn=None,
-        _js=f"recalculate_prompts_{tabname}",
+        _js=f"recalculate_prompts_{prompt_tabname}",
         inputs=[],
         outputs=[],
         show_progress=False,

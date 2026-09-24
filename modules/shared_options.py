@@ -198,10 +198,12 @@ options_templates.update(options_section(('sd3', "Stable Diffusion 3", "sd"), {
     "sd3_enable_t5": OptionInfo(False, "Enable T5").info("load T5 text encoder; increases VRAM use by a lot, potentially improving quality of generation; requires model reload to apply"),
 }))
 
-options_templates.update(options_section(('lumina', "Lumina", "sd"), {
-    "lumina_max_sequence_length": OptionInfo(256, "Maximum sequence length", gr.Slider, {"minimum": 32, "maximum": 512, "step": 1}).info("includes the automatic Lumina prompt prefix tokens"),
-    "lumina_sampler_shift": OptionInfo(4.5, "Sampler shift", gr.Slider, {"minimum": 0.1, "maximum": 12.0, "step": 0.1}).info("ComfyUI Lumina workflow default uses AuraFlow-style shift 4.5"),
-    "lumina_cfg_normalization": OptionInfo(True, "Normalize CFG output").info("matches the official Lumina2 classifier-free guidance behavior"),
+options_templates.update(options_section((None, "Hidden options"), {
+    # Keep the legacy defaults available to the Lumina backend and old config files.
+    # gr.State also prevents a stale quick-setting entry from restoring visible controls.
+    "lumina_max_sequence_length": OptionInfo(256, "Legacy Lumina maximum sequence length", gr.State),
+    "lumina_sampler_shift": OptionInfo(4.5, "Legacy Lumina sampler shift", gr.State),
+    "lumina_cfg_normalization": OptionInfo(True, "Legacy Lumina CFG normalization", gr.State),
 }))
 
 options_templates.update(options_section(('vae', "VAE", "sd"), {

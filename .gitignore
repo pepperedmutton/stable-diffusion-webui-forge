@@ -16,6 +16,8 @@ __pycache__
 /SwinIR/*
 /repositories
 /venv
+/runtimes/
+/.colab/
 /tmp
 /output
 /model.ckpt

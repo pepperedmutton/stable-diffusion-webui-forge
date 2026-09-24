@@ -32,7 +32,7 @@ class ScriptRefiner(scripts.ScriptBuiltinUI):
             return None if info is None else info.short_title
         
         self.infotext_fields = [
-            PasteField(enable_refiner, lambda d: 'Refiner' in d),
+            PasteField(enable_refiner, lambda d: 'Refiner' in d, api="refiner_enable"),
             PasteField(refiner_checkpoint, lambda d: lookup_checkpoint(d.get('Refiner')), api="refiner_checkpoint"),
             PasteField(refiner_switch_at, 'Refiner switch at', api="refiner_switch_at"),
         ]

@@ -1704,18 +1704,251 @@ body.resizing .resize-handle {
     min-width: 0 !important;
 }
 
-body.forge-preset-lumina #txt2img_distilled_cfg_scale,
-body.forge-preset-lumina #img2img_distilled_cfg_scale,
-body.forge-preset-lumina #txt2img_hr,
-body.forge-preset-lumina #txt2img_refiner_enable,
-body.forge-preset-lumina #txt2img_refiner_enable-checkbox,
-body.forge-preset-lumina #img2img_refiner_enable,
-body.forge-preset-lumina #img2img_refiner_enable-checkbox,
-body.forge-preset-lumina #txt2img_hires_fix_row1,
-body.forge-preset-lumina #txt2img_hires_fix_row2,
-body.forge-preset-lumina #txt2img_hires_fix_row_cfg,
-body.forge-preset-lumina #txt2img_hires_fix_row3,
-body.forge-preset-lumina #txt2img_hires_fix_row3b,
-body.forge-preset-lumina #txt2img_hires_fix_row4 {
+body.forge-preset-krea #txt2img_distilled_cfg_scale,
+body.forge-preset-krea #img2img_distilled_cfg_scale,
+body.forge-preset-krea #txt2img_hr,
+body.forge-preset-krea #txt2img_refiner_enable,
+body.forge-preset-krea #txt2img_refiner_enable-checkbox,
+body.forge-preset-krea #img2img_refiner_enable,
+body.forge-preset-krea #img2img_refiner_enable-checkbox,
+body.forge-preset-krea #txt2img_hires_fix_row1,
+body.forge-preset-krea #txt2img_hires_fix_row2,
+body.forge-preset-krea #txt2img_hires_fix_row_cfg,
+body.forge-preset-krea #txt2img_hires_fix_row3,
+body.forge-preset-krea #txt2img_hires_fix_row3b,
+body.forge-preset-krea #txt2img_hires_fix_row4 {
+    display: none !important;
+}
+
+/* Qwen 2.1 uses instruction-based editing and its own complete pipeline. */
+#forge_qwen21_help {
+    display: none;
+}
+body.forge-preset-qwen #forge_qwen21_help {
+    display: block;
+}
+body.forge-preset-qwen #txt2img_neg_prompt_row,
+body.forge-preset-qwen #txt2img_script_container,
+body.forge-preset-qwen #img2img_script_container,
+body.forge-preset-qwen #soft_inpainting_enabled,
+body.forge-preset-qwen #soft_inpainting_enabled-checkbox,
+body.forge-preset-qwen #txt2img_subseed_show,
+body.forge-preset-qwen #img2img_subseed_show,
+body.forge-preset-qwen #txt2img_upscale,
+body.forge-preset-qwen #img2img_neg_prompt_row,
+body.forge-preset-qwen #txt2img_distilled_cfg_scale,
+body.forge-preset-qwen #img2img_distilled_cfg_scale,
+body.forge-preset-qwen #txt2img_hr,
+body.forge-preset-qwen #txt2img_refiner_enable,
+body.forge-preset-qwen #txt2img_refiner_enable-checkbox,
+body.forge-preset-qwen #img2img_refiner_enable,
+body.forge-preset-qwen #img2img_refiner_enable-checkbox,
+body.forge-preset-qwen [id^="txt2img_hires_fix_row"],
+body.forge-preset-qwen #img2img_denoising_strength,
+body.forge-preset-qwen #resize_mode,
+body.forge-preset-qwen #img2img_mask_blur,
+body.forge-preset-qwen #img2img_inpainting_fill,
+body.forge-preset-qwen #img2img_inpaint_full_res,
+body.forge-preset-qwen #img2img_inpaint_full_res_padding,
+body.forge-preset-qwen #txt2img_restore_faces,
+body.forge-preset-qwen #img2img_restore_faces,
+body.forge-preset-qwen #txt2img_tiling,
+body.forge-preset-qwen #img2img_tiling,
+body.forge-preset-qwen #txt2img_lora,
+body.forge-preset-qwen #img2img_lora,
+body.forge-preset-qwen #txt2img_lora-button,
+body.forge-preset-qwen #img2img_lora-button,
+body.forge-preset-qwen #txt2img_textual_inversion,
+body.forge-preset-qwen #img2img_textual_inversion,
+body.forge-preset-qwen #txt2img_textual_inversion-button,
+body.forge-preset-qwen #img2img_textual_inversion-button,
+body.forge-preset-qwen #txt2img_hypernetworks,
+body.forge-preset-qwen #img2img_hypernetworks,
+body.forge-preset-qwen #txt2img_hypernetworks-button,
+body.forge-preset-qwen #img2img_hypernetworks-button {
+    display: none !important;
+}
+
+#img2img_outpaint_preview,
+#forge_outpaint_preview {
+    --forge-outpaint-preview-background: var(--input-background-fill, var(--body-background-fill, #ffffff));
+    --forge-outpaint-preview-new-area: var(--neutral-200, #e5e7eb);
+    --forge-outpaint-preview-image-area: var(--body-background-fill, #ffffff);
+    --forge-outpaint-preview-border: var(--block-border-color, #9ca3af);
+    --forge-outpaint-preview-accent: var(--primary-500, #3b82f6);
+    --forge-outpaint-preview-text: var(--body-text-color, #111827);
+    --forge-outpaint-preview-subdued: var(--block-label-text-color, var(--body-text-color, #4b5563));
+    position: relative;
+    display: flex;
+    width: 100%;
+    min-height: 17.5rem;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    border: 1px solid var(--forge-outpaint-preview-border);
+    border-radius: var(--block-radius, 8px);
+    background: var(--forge-outpaint-preview-background);
+}
+
+.dark #img2img_outpaint_preview,
+.dark #forge_outpaint_preview {
+    --forge-outpaint-preview-new-area: var(--neutral-800, #1f2937);
+}
+
+#img2img_outpaint_preview .forge-outpaint-preview-canvas,
+#forge_outpaint_preview .forge-outpaint-preview-canvas {
+    display: block;
+    width: 100%;
+    height: auto;
+    pointer-events: none;
+    user-select: none;
+}
+
+#img2img_outpaint_preview .forge-outpaint-editor-overlay,
+#forge_outpaint_preview .forge-outpaint-editor-overlay {
+    position: absolute;
+    z-index: 2;
+    inset: 0;
+    overflow: hidden;
+    touch-action: none;
+    user-select: none;
+}
+
+.forge-outpaint-handle,
+.forge-outpaint-source-mover {
+    position: absolute;
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    outline: none;
+    background: transparent;
+}
+
+.forge-outpaint-handle {
+    z-index: 4;
+}
+
+.forge-outpaint-handle::after {
+    position: absolute;
+    display: block;
+    box-sizing: border-box;
+    border: 2px solid var(--forge-outpaint-preview-background);
+    border-radius: 999px;
+    background: var(--forge-outpaint-preview-accent);
+    box-shadow: 0 1px 4px rgb(0 0 0 / 35%);
+    content: "";
+    opacity: 0.9;
+    transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.forge-outpaint-handle--left,
+.forge-outpaint-handle--right {
+    cursor: ew-resize;
+}
+
+.forge-outpaint-handle--left::after,
+.forge-outpaint-handle--right::after {
+    top: 50%;
+    left: 50%;
+    width: 9px;
+    height: 34px;
+    transform: translate(-50%, -50%);
+}
+
+.forge-outpaint-handle--top,
+.forge-outpaint-handle--bottom {
+    cursor: ns-resize;
+}
+
+.forge-outpaint-handle--top::after,
+.forge-outpaint-handle--bottom::after {
+    top: 50%;
+    left: 50%;
+    width: 34px;
+    height: 9px;
+    transform: translate(-50%, -50%);
+}
+
+.forge-outpaint-handle--top-left,
+.forge-outpaint-handle--bottom-right {
+    cursor: nwse-resize;
+}
+
+.forge-outpaint-handle--top-right,
+.forge-outpaint-handle--bottom-left {
+    cursor: nesw-resize;
+}
+
+.forge-outpaint-handle--top-left::after,
+.forge-outpaint-handle--top-right::after,
+.forge-outpaint-handle--bottom-left::after,
+.forge-outpaint-handle--bottom-right::after {
+    top: 50%;
+    left: 50%;
+    width: 14px;
+    height: 14px;
+    border-radius: 4px;
+    transform: translate(-50%, -50%);
+}
+
+.forge-outpaint-handle:hover::after,
+.forge-outpaint-handle:focus-visible::after {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.2);
+}
+
+.forge-outpaint-handle:focus-visible::before {
+    position: absolute;
+    z-index: -1;
+    inset: 2px;
+    border: 2px solid var(--forge-outpaint-preview-accent);
+    border-radius: 6px;
+    content: "";
+}
+
+.forge-outpaint-source-mover {
+    z-index: 3;
+    cursor: move;
+}
+
+.forge-outpaint-source-mover:hover,
+.forge-outpaint-source-mover:focus-visible {
+    border: 2px dashed var(--forge-outpaint-preview-accent);
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--forge-outpaint-preview-accent) 8%, transparent);
+}
+
+.forge-outpaint-source-mover:focus-visible {
+    outline: 2px solid var(--forge-outpaint-preview-background);
+    outline-offset: 2px;
+}
+
+.forge-outpaint-editor-overlay--dragging,
+.forge-outpaint-editor-overlay--dragging * {
+    cursor: grabbing !important;
+}
+
+.forge-outpaint-editor-status {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+
+#img2img_outpaint_preview .forge-outpaint-preview-message,
+#forge_outpaint_preview .forge-outpaint-preview-message {
+    padding: 1.5rem;
+    color: var(--forge-outpaint-preview-subdued);
+    font-size: var(--block-label-text-size, 0.875rem);
+    line-height: 1.4;
+    text-align: center;
+}
+
+#img2img_outpaint_preview [hidden],
+#forge_outpaint_preview [hidden] {
     display: none !important;
 }

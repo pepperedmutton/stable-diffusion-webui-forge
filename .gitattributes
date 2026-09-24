@@ -1,0 +1,2 @@
+# Preserve vendored source bytes so the integrity manifest also works on Linux.
+colab/vendor/** -text

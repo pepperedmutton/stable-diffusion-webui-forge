@@ -202,6 +202,8 @@ def process_interrogate(interrogation_function, mode, ii_input_dir, ii_output_di
         return [interrogation_function(ii_singles[mode]), None]
     elif mode == 2:
         return [interrogation_function(ii_singles[mode]), None]
+    elif mode == 6:
+        return [interrogation_function(ii_singles[5]), None]
     elif mode == 5:
         assert not shared.cmd_opts.hide_ui_dir_config, "Launched with --hide-ui-dir-config, batch img2img disabled"
         images = shared.listfiles(ii_input_dir)
@@ -270,7 +272,7 @@ def update_token_counter(text, steps, styles, *, is_positive=True):
         prompt_schedules = [[[steps, text]]]
 
     try:
-        get_prompt_lengths_on_ui = sd_models.model_data.sd_model.get_prompt_lengths_on_ui
+        get_prompt_lengths_on_ui = sd_models.get_prompt_length_counter_for_ui()
         assert get_prompt_lengths_on_ui is not None
     except Exception:
         return f"<span class='gr-box gr-text-input'>?/?</span>"
@@ -653,7 +655,7 @@ def create_ui():
 
                 def add_copy_image_controls(tab_name, elem):
                     with gr.Row(variant="compact", elem_id=f"img2img_copy_to_{tab_name}"):
-                        for title, name in zip(['to img2img', 'to sketch', 'to inpaint', 'to inpaint sketch'], ['img2img', 'sketch', 'inpaint', 'inpaint_sketch']):
+                        for title, name in zip(['to img2img', 'to sketch', 'to inpaint', 'to outpaint', 'to inpaint sketch'], ['img2img', 'sketch', 'inpaint', 'outpaint', 'inpaint_sketch']):
                             if name == tab_name:
                                 gr.Button(title, interactive=False)
                                 copy_image_destinations[name] = elem
@@ -683,6 +685,44 @@ def create_ui():
                             with gr.TabItem('Inpaint', id='inpaint', elem_id="img2img_inpaint_tab") as tab_inpaint:
                                 init_img_with_mask = ForgeCanvas(elem_id="img2maskimg", height=512, contrast_scribbles=opts.img2img_inpaint_mask_high_contrast, scribble_color=opts.img2img_inpaint_mask_brush_color, scribble_color_fixed=True, scribble_alpha=opts.img2img_inpaint_mask_scribble_alpha, scribble_alpha_fixed=True, scribble_softness_fixed=True)
                                 add_copy_image_controls('inpaint', init_img_with_mask)
+
+                            with gr.TabItem('Outpaint', id='outpaint', elem_id="img2img_outpaint_tab") as tab_outpaint:
+                                outpaint_image = ForgeCanvas(elem_id="img2img_outpaint", height=512, no_scribbles=True)
+                                add_copy_image_controls('outpaint', outpaint_image)
+
+                                gr.HTML(
+                                    '<p id="img2img_outpaint_editor_help">Pull the output frame to set the output area. '
+                                    "Pull the input image to place it inside the frame. The main Width and Height "
+                                    "controls do not apply. The output format is always PNG.</p>"
+                                )
+
+                                gr.HTML('<div id="img2img_outpaint_preview" class="forge-outpaint-preview"></div>')
+
+                                with gr.Accordion("Exact values", open=False):
+                                    outpaint_region_mode = gr.Radio(
+                                        label="Region mode",
+                                        choices=["Margins", "Canvas position"],
+                                        value="Margins",
+                                        elem_id="img2img_outpaint_region_mode",
+                                    )
+
+                                    with gr.Row():
+                                        outpaint_left = gr.Number(label="Left margin", value=128, precision=0, minimum=0, maximum=16384, step=1, elem_id="img2img_outpaint_left")
+                                        outpaint_right = gr.Number(label="Right margin", value=128, precision=0, minimum=0, maximum=16384, step=1, elem_id="img2img_outpaint_right")
+                                        outpaint_top = gr.Number(label="Top margin", value=128, precision=0, minimum=0, maximum=16384, step=1, elem_id="img2img_outpaint_top")
+                                        outpaint_bottom = gr.Number(label="Bottom margin", value=128, precision=0, minimum=0, maximum=16384, step=1, elem_id="img2img_outpaint_bottom")
+
+                                    with gr.Row():
+                                        outpaint_canvas_width = gr.Number(label="Canvas width", value=1024, precision=0, minimum=1, maximum=32768, step=1, elem_id="img2img_outpaint_canvas_width")
+                                        outpaint_canvas_height = gr.Number(label="Canvas height", value=1024, precision=0, minimum=1, maximum=32768, step=1, elem_id="img2img_outpaint_canvas_height")
+                                        outpaint_source_x = gr.Number(label="Input X position", value=0, precision=0, minimum=0, maximum=32768, step=1, elem_id="img2img_outpaint_source_x")
+                                        outpaint_source_y = gr.Number(label="Input Y position", value=0, precision=0, minimum=0, maximum=32768, step=1, elem_id="img2img_outpaint_source_y")
+
+                                with gr.Row():
+                                    outpaint_context_overlap = gr.Number(label="Context overlap", value=32, precision=0, minimum=0, maximum=1024, step=1, elem_id="img2img_outpaint_context_overlap")
+                                    outpaint_mask_blur = gr.Number(label="Outpaint mask blur", value=8, precision=0, minimum=0, maximum=256, step=1, elem_id="img2img_outpaint_mask_blur")
+                                    outpaint_fill_mode = gr.Dropdown(label="Fill mode", choices=["Edge", "Reflect", "Noise"], value="Edge", elem_id="img2img_outpaint_fill_mode")
+                                    outpaint_max_megapixels = gr.Number(label="Maximum megapixels", value=4.0, precision=1, minimum=0.1, maximum=64, step=0.1, elem_id="img2img_outpaint_max_megapixels")
 
                             with gr.TabItem('Inpaint sketch', id='inpaint_sketch', elem_id="img2img_inpaint_sketch_tab") as tab_inpaint_color:
                                 inpaint_color_sketch = ForgeCanvas(elem_id="inpaint_sketch", height=512, scribble_color=opts.img2img_inpaint_sketch_default_brush_color)
@@ -715,10 +755,11 @@ def create_ui():
                                     img2img_batch_png_info_dir = gr.Textbox(label="PNG info directory", **shared.hide_dirs, placeholder="Leave empty to use input directory", elem_id="img2img_batch_png_info_dir")
                                     img2img_batch_png_info_props = gr.CheckboxGroup(["Prompt", "Negative prompt", "Seed", "CFG scale", "Sampler", "Steps", "Model hash"], label="Parameters to take from png info", info="Prompts from png info will be appended to prompts set in ui.")
 
-                            img2img_tabs = [tab_img2img, tab_sketch, tab_inpaint, tab_inpaint_color, tab_inpaint_upload, tab_batch]
+                            img2img_tabs = [tab_img2img, tab_sketch, tab_inpaint, tab_outpaint, tab_inpaint_color, tab_inpaint_upload, tab_batch]
+                            img2img_tab_modes = [0, 1, 2, 6, 3, 4, 5]
 
-                            for i, tab in enumerate(img2img_tabs):
-                                tab.select(fn=lambda tabnum=i: tabnum, inputs=[], outputs=[img2img_selected_tab])
+                            for tab, mode in zip(img2img_tabs, img2img_tab_modes):
+                                tab.select(fn=lambda tabnum=mode: tabnum, inputs=[], outputs=[img2img_selected_tab])
 
                         def copyCanvas_img2img (background, foreground, source):
                             if source == 1 or source == 3: #   1 is sketch, 3 is Inpaint sketch
@@ -852,9 +893,9 @@ def create_ui():
             def select_img2img_tab(tab):
                 return gr.update(visible=tab in [2, 3, 4]), gr.update(visible=tab == 3),
 
-            for i, elem in enumerate(img2img_tabs):
+            for elem, mode in zip(img2img_tabs, img2img_tab_modes):
                 elem.select(
-                    fn=lambda tab=i: select_img2img_tab(tab),
+                    fn=lambda tab=mode: select_img2img_tab(tab),
                     inputs=[],
                     outputs=[inpaint_controls, mask_alpha],
                 )
@@ -902,6 +943,20 @@ def create_ui():
                 img2img_batch_png_info_dir,
                 img2img_batch_source_type,
                 img2img_batch_upload,
+                outpaint_image.background,
+                outpaint_region_mode,
+                outpaint_left,
+                outpaint_right,
+                outpaint_top,
+                outpaint_bottom,
+                outpaint_canvas_width,
+                outpaint_canvas_height,
+                outpaint_source_x,
+                outpaint_source_y,
+                outpaint_context_overlap,
+                outpaint_mask_blur,
+                outpaint_fill_mode,
+                outpaint_max_megapixels,
             ] + custom_inputs
 
             img2img_args = dict(
@@ -928,6 +983,7 @@ def create_ui():
                     init_img_with_mask.background,
                     inpaint_color_sketch.background,
                     init_img_inpaint,
+                    outpaint_image.background,
                 ],
                 outputs=[toprow.prompt, dummy_component],
             )
@@ -993,8 +1049,37 @@ def create_ui():
                 (inpaint_full_res_padding, 'Masked area padding'),
                 *scripts.scripts_img2img.infotext_fields
             ]
+
+            def outpaint_metadata_part(key, index, separator=","):
+                def read_part(params):
+                    value = params.get(key)
+                    if value is None:
+                        return None
+
+                    parts = [part.strip() for part in str(value).split(separator)]
+                    return parts[index] if index < len(parts) else None
+
+                return read_part
+
+            outpaint_paste_fields = [
+                *img2img_paste_fields,
+                (outpaint_region_mode, "Outpaint region mode"),
+                (outpaint_left, outpaint_metadata_part("Outpaint margins", 0)),
+                (outpaint_right, outpaint_metadata_part("Outpaint margins", 1)),
+                (outpaint_top, outpaint_metadata_part("Outpaint margins", 2)),
+                (outpaint_bottom, outpaint_metadata_part("Outpaint margins", 3)),
+                (outpaint_canvas_width, outpaint_metadata_part("Outpaint canvas size", 0, "x")),
+                (outpaint_canvas_height, outpaint_metadata_part("Outpaint canvas size", 1, "x")),
+                (outpaint_source_x, outpaint_metadata_part("Outpaint source position", 0)),
+                (outpaint_source_y, outpaint_metadata_part("Outpaint source position", 1)),
+                (outpaint_context_overlap, "Outpaint context overlap"),
+                (outpaint_mask_blur, "Outpaint mask blur"),
+                (outpaint_fill_mode, "Outpaint fill mode"),
+                (outpaint_max_megapixels, "Outpaint maximum megapixels"),
+            ]
             parameters_copypaste.add_paste_fields("img2img", init_img.background, img2img_paste_fields, override_settings)
             parameters_copypaste.add_paste_fields("inpaint", init_img_with_mask.background, img2img_paste_fields, override_settings)
+            parameters_copypaste.add_paste_fields("outpaint", outpaint_image.background, outpaint_paste_fields, override_settings)
             parameters_copypaste.register_paste_params_button(parameters_copypaste.ParamBinding(
                 paste_button=toprow.paste, tabname="img2img", source_text_component=toprow.prompt, source_image_component=None,
             ))
@@ -1022,7 +1107,7 @@ def create_ui():
                 generation_info = gr.Textbox(visible=False, elem_id="pnginfo_generation_info")
                 html2 = gr.HTML()
                 with gr.Row():
-                    buttons = parameters_copypaste.create_buttons(["txt2img", "img2img", "inpaint", "extras"])
+                    buttons = parameters_copypaste.create_buttons(["txt2img", "img2img", "inpaint", "outpaint", "extras"])
 
                 for tabname, button in buttons.items():
                     parameters_copypaste.register_paste_params_button(parameters_copypaste.ParamBinding(

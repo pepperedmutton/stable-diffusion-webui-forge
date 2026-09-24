@@ -1,0 +1,170 @@
+/* Mobile overrides for this Forge checkout. Append through mobile_patch.py. */
+@media (max-width: 700px), (pointer: coarse) and (max-width: 1100px) {
+    .gradio-container {
+        padding-left: 8px !important;
+        padding-right: 8px !important;
+        box-sizing: border-box;
+    }
+
+    #txt2img_settings,
+    #img2img_settings,
+    #txt2img_results,
+    #img2img_results,
+    #txt2img_prompt_container,
+    #img2img_prompt_container,
+    #txt2img_actions_column,
+    #img2img_actions_column {
+        min-width: 0 !important;
+        max-width: 100%;
+    }
+
+    /* Removing Gradio's minimum width alone collapses the prompt to a sliver.
+       Stack the prompt and action columns, keeping each at the available width. */
+    #txt2img_toprow,
+    #img2img_toprow {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 12px;
+    }
+
+    #txt2img_prompt_container,
+    #img2img_prompt_container,
+    #txt2img_actions_column,
+    #img2img_actions_column,
+    #txt2img_settings,
+    #img2img_settings,
+    #txt2img_results,
+    #img2img_results {
+        flex: 0 1 auto !important;
+        width: 100%;
+        box-sizing: border-box;
+    }
+
+    /* The resize script switches between flex and grid at 704px. Both modes
+       need a single column on touch screens; do not override display because
+       preset-specific visibility must continue to work. */
+    .resize-handle-row:has(> #txt2img_settings),
+    .resize-handle-row:has(> #img2img_settings),
+    .resize-handle-row:has(> #extras_results) {
+        flex-direction: column;
+        grid-template-columns: minmax(0, 1fr) !important;
+        row-gap: 16px !important;
+    }
+
+    .resize-handle-row:has(> #txt2img_settings) > .resize-handle,
+    .resize-handle-row:has(> #img2img_settings) > .resize-handle,
+    .resize-handle-row:has(> #extras_results) > .resize-handle {
+        display: none !important;
+    }
+
+    #txt2img_tools,
+    #img2img_tools {
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    #txt2img_generate_box,
+    #img2img_generate_box {
+        min-height: 52px;
+    }
+
+    #txt2img_prompt textarea,
+    #img2img_prompt textarea,
+    #txt2img_neg_prompt textarea,
+    #img2img_neg_prompt textarea {
+        min-height: 112px;
+        max-height: 240px;
+        overflow-y: auto !important;
+        box-sizing: border-box;
+    }
+
+    #txt2img_results,
+    #img2img_results,
+    #extras_results {
+        position: static;
+    }
+
+    #tabs > .tab-nav,
+    #mode_img2img > .tab-nav {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        overscroll-behavior-x: contain;
+    }
+
+    #tabs > .tab-nav > button,
+    #mode_img2img > .tab-nav > button {
+        flex-shrink: 0;
+        white-space: nowrap;
+    }
+
+    .gradio-container textarea,
+    .gradio-container input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
+    .gradio-container select {
+        font-size: 16px !important;
+    }
+
+    .gradio-dropdown ul.options {
+        min-width: 0;
+        max-width: 100%;
+        white-space: normal;
+        overflow-wrap: anywhere;
+    }
+
+    .popup-dialog {
+        width: min(56em, calc(100vw - 24px));
+        max-width: calc(100vw - 24px);
+        box-sizing: border-box;
+        padding: 12px !important;
+    }
+}
+
+@media (pointer: coarse) {
+    .gradio-container button,
+    .gradio-container .gradio-button {
+        min-height: 44px;
+    }
+
+    .gradio-container .gradio-button.tool {
+        min-width: 44px !important;
+        max-width: none;
+        height: 44px;
+    }
+
+    /* Gallery download and clear icons otherwise stay about 22px wide. */
+    .gradio-container [id$="_gallery"] button[title]:not([title=""]) {
+        min-width: 44px !important;
+        min-height: 44px !important;
+        margin-left: 8px;
+    }
+
+    .forge-toolbar,
+    .forge-toolbar-static {
+        opacity: 1 !important;
+        max-width: 100%;
+        box-sizing: border-box;
+        padding: 4px;
+    }
+
+    .forge-toolbar-box-a {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+    }
+
+    .forge-toolbar .forge-btn,
+    .forge-toolbar-static .forge-btn {
+        min-width: 44px;
+        min-height: 44px;
+    }
+
+    /* Empty editor background scrolls; actual drag targets keep touch control. */
+    #img2img_outpaint_preview .forge-outpaint-editor-overlay,
+    #forge_outpaint_preview .forge-outpaint-editor-overlay {
+        touch-action: pan-y;
+    }
+
+    .forge-outpaint-handle,
+    .forge-outpaint-source-mover {
+        touch-action: none;
+    }
+}

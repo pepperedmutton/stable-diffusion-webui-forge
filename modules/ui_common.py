@@ -193,6 +193,7 @@ def create_output_panel(tabname, outdir, toprow=None):
                 buttons = {
                     'img2img': ToolButton('🖼️', elem_id=f'{tabname}_send_to_img2img', tooltip="Send image and generation parameters to img2img tab."),
                     'inpaint': ToolButton('🎨️', elem_id=f'{tabname}_send_to_inpaint', tooltip="Send image and generation parameters to img2img inpaint tab."),
+                    'outpaint': ToolButton('↔️', elem_id=f'{tabname}_send_to_outpaint', tooltip="Send image and generation parameters to img2img Outpaint tab."),
                     'extras': ToolButton('📐', elem_id=f'{tabname}_send_to_extras', tooltip="Send image and generation parameters to extras tab.")
                 }
 

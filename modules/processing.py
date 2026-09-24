@@ -772,10 +772,10 @@ def create_infotext(p, all_prompts, all_seeds, all_subseeds, comments=None, iter
         "User": p.user if opts.add_user_name_to_info else None,
     })
 
-    if shared.opts.forge_unet_storage_dtype != 'Automatic':
+    if not getattr(p, 'qwen21', False) and shared.opts.forge_unet_storage_dtype != 'Automatic':
         generation_params['Diffusion in Low Bits'] = shared.opts.forge_unet_storage_dtype
 
-    if isinstance(shared.opts.forge_additional_modules, list) and len(shared.opts.forge_additional_modules) > 0:
+    if not getattr(p, 'qwen21', False) and isinstance(shared.opts.forge_additional_modules, list) and len(shared.opts.forge_additional_modules) > 0:
         for i, m in enumerate(shared.opts.forge_additional_modules):
             generation_params[f'Module {i+1}'] = os.path.splitext(os.path.basename(m))[0]
 
@@ -801,9 +801,18 @@ need_global_unload = False
 def manage_model_and_prompt_cache(p: StableDiffusionProcessing):
     global need_global_unload
 
-    p.sd_model, just_reloaded = forge_model_reload()
+    loaded_preset = str(
+        getattr(sd_models.model_data.get_sd_model(), 'forge_preset', '') or ''
+    ).strip().lower()
+    target_preset = str(getattr(opts, 'forge_preset', '') or '').strip().lower()
+    force_full_unload = need_global_unload and bool(loaded_preset) and bool(target_preset) and loaded_preset != target_preset
 
-    if need_global_unload and not just_reloaded:
+    if force_full_unload:
+        sd_models.clear_forge_model_caches_for_switch()
+
+    p.sd_model, just_reloaded = forge_model_reload(force_full_unload=force_full_unload)
+
+    if need_global_unload and not just_reloaded and not force_full_unload:
         memory_management.unload_all_models()
 
     if need_global_unload:
@@ -814,7 +823,8 @@ def manage_model_and_prompt_cache(p: StableDiffusionProcessing):
 
 def process_images(p: StableDiffusionProcessing) -> Processed:
     """applies settings overrides (if any) before processing images, then restores settings as applicable."""
-    if p.scripts is not None:
+    from modules_forge import qwen21
+    if p.scripts is not None and not qwen21.selected_for(p):
         p.scripts.before_process(p)
         
     stored_opts = {k: opts.data[k] if k in opts.data else opts.get_default(k) for k in p.override_settings.keys() if k in opts.data}
@@ -827,6 +837,10 @@ def process_images(p: StableDiffusionProcessing) -> Processed:
 
         # apply any options overrides
         set_config(p.override_settings, is_api=True, run_callbacks=False, save_config=False)
+
+        from modules_forge import qwen21
+        if qwen21.is_checkpoint(sd_models.model_data.forge_loading_parameters.get('checkpoint_info')):
+            return qwen21.process_images(p)
 
         # load/reload model and manage prompt cache as needed
         if getattr(p, 'txt2img_upscale', False):

@@ -182,6 +182,9 @@ def list_models():
         checkpoint_info = CheckpointInfo(filename)
         checkpoint_info.register()
 
+    from modules_forge import qwen21
+    qwen21.register_checkpoint()
+
 
 re_strip_checksum = re.compile(r"\s*\[[^]]+]\s*$")
 
@@ -394,11 +397,66 @@ def apply_alpha_schedule_override(sd_model, p=None):
 
 # This is a dummy class for backward compatibility when model is not load - for extensions like prompt all in one.
 class FakeInitialModel:
+    _krea_tokenizer = None
+    _krea_tokenizer_failed = False
+    _krea_tokenizer_lock = threading.Lock()
+    _krea_suffix_token_count = 5
+
     def __init__(self):
         self.cond_stage_model = None
         self.chunk_length = 75
 
+    @classmethod
+    def _get_krea_tokenizer(cls):
+        if cls._krea_tokenizer is not None or cls._krea_tokenizer_failed:
+            return cls._krea_tokenizer
+
+        with cls._krea_tokenizer_lock:
+            if cls._krea_tokenizer is not None or cls._krea_tokenizer_failed:
+                return cls._krea_tokenizer
+
+            tokenizer_path = os.path.join(
+                paths.script_path,
+                "extensions",
+                "sd-forge-krea2",
+                "hf_config",
+                "Krea2",
+                "tokenizer",
+            )
+            try:
+                from transformers import Qwen2Tokenizer
+
+                tokenizer = Qwen2Tokenizer.from_pretrained(tokenizer_path, local_files_only=True)
+                suffix = "<|im_end|>\n<|im_start|>assistant\n"
+                suffix_token_count = len(tokenizer(suffix, add_special_tokens=False)["input_ids"])
+                if suffix_token_count != 5:
+                    raise RuntimeError(f"expected a 5-token Krea suffix, got {suffix_token_count}")
+
+                cls._krea_tokenizer = tokenizer
+                cls._krea_suffix_token_count = suffix_token_count
+            except Exception as exc:
+                cls._krea_tokenizer_failed = True
+                print(f"Krea prompt counter will use its conservative byte-count fallback: {exc}")
+
+        return cls._krea_tokenizer
+
+    @classmethod
+    def get_krea_prompt_lengths_on_ui(cls, prompt):
+        prompt = str(prompt).strip()
+        tokenizer = cls._get_krea_tokenizer()
+        if tokenizer is not None:
+            body_token_count = len(tokenizer(prompt, add_special_tokens=False)["input_ids"])
+        else:
+            # Qwen uses byte-level BPE. One token per UTF-8 byte is a safe upper bound.
+            body_token_count = len(prompt.encode("utf-8"))
+
+        return body_token_count + cls._krea_suffix_token_count, 512
+
     def get_prompt_lengths_on_ui(self, prompt):
+        preset = str(getattr(opts, "forge_preset", "") or "").strip().lower()
+        if preset == "krea":
+            return self.get_krea_prompt_lengths_on_ui(prompt)
+
         r = len(prompt.strip('!,. ').replace(' ', ',').replace('.', ',').replace('!', ',').replace(',,', ',').replace(',,', ',').replace(',,', ',').replace(',,', ',').split(','))
         return r, math.ceil(max(r, 1) / self.chunk_length) * self.chunk_length
 
@@ -418,6 +476,20 @@ class SdModelData:
 
 
 model_data = SdModelData()
+
+
+def get_prompt_length_counter_for_ui():
+    preset = str(getattr(opts, "forge_preset", "") or "").strip().lower()
+    if preset == "qwen":
+        from modules_forge.qwen21 import prompt_lengths
+        return prompt_lengths
+    if preset == "krea":
+        return FakeInitialModel.get_krea_prompt_lengths_on_ui
+
+    if getattr(model_data.sd_model, "qwen21", False):
+        return FakeInitialModel().get_prompt_lengths_on_ui
+
+    return model_data.sd_model.get_prompt_lengths_on_ui
 
 
 def get_empty_cond(sd_model):
@@ -461,10 +533,18 @@ def reload_model_weights(sd_model=None, info=None, forced_reload=False):
 
 
 def unload_model_weights(sd_model=None, info=None):
+    from modules_forge.qwen21 import stop_worker
+    stop_worker()
     memory_management.unload_all_models()
     model_data.forge_cpu_cache.clear()
     checkpoints_loaded.clear()
     return
+
+
+def clear_forge_model_caches_for_switch():
+    model_data.forge_cpu_cache.clear()
+    checkpoints_loaded.clear()
+    gc.collect()
 
 
 def apply_token_merging(sd_model, token_merging_ratio):
@@ -531,14 +611,22 @@ def get_forge_model_from_cpu_cache(cache_key):
 
 
 @torch.inference_mode()
-def forge_model_reload():
+def forge_model_reload(force_full_unload=False):
     current_hash = str(model_data.forge_loading_parameters)
 
-    if model_data.forge_hash == current_hash:
+    from modules_forge import qwen21
+    target_checkpoint = model_data.forge_loading_parameters.get('checkpoint_info')
+    if qwen21.is_checkpoint(target_checkpoint):
+        if model_data.forge_hash == current_hash and getattr(model_data.sd_model, 'qwen21', False) and not force_full_unload:
+            return model_data.sd_model, False
+        return qwen21.load_forge_model(target_checkpoint)
+    qwen21.release_if_inactive(target_checkpoint)
+
+    if model_data.forge_hash == current_hash and not force_full_unload:
         return model_data.sd_model, False
 
-    cached_sd_model = get_forge_model_from_cpu_cache(current_hash)
-    should_unload_models_on_switch = keep_only_one_model_on_device() or not forge_cpu_cache_enabled()
+    cached_sd_model = None if force_full_unload else get_forge_model_from_cpu_cache(current_hash)
+    should_unload_models_on_switch = force_full_unload or keep_only_one_model_on_device() or not forge_cpu_cache_enabled()
     if cached_sd_model is not None:
         cache_mode = "CPU cache" if keep_only_one_model_on_device() else "model cache"
         print(f'Loading Model from {cache_mode}: ' + str(model_data.forge_loading_parameters))
@@ -560,11 +648,12 @@ def forge_model_reload():
     print('Loading Model: ' + str(model_data.forge_loading_parameters))
 
     timer = Timer()
-    previous_sd_model = model_data.sd_model
+    previous_sd_model = None if force_full_unload else model_data.sd_model
     previous_forge_hash = model_data.forge_hash
 
     if model_data.sd_model:
-        remember_forge_model_in_cpu_cache(model_data.forge_hash, model_data.sd_model)
+        if not force_full_unload:
+            remember_forge_model_in_cpu_cache(model_data.forge_hash, model_data.sd_model)
         model_data.sd_model = None
         if should_unload_models_on_switch:
             memory_management.unload_all_models()
@@ -626,12 +715,22 @@ def forge_model_reload():
             if prev_info is not None:
                 shared.opts.data["sd_checkpoint_hash"] = prev_info.sha256
             print("Model reload failed; restored previous model.")
+        elif force_full_unload:
+            memory_management.unload_all_models()
+            model_data.forge_cpu_cache.clear()
+            checkpoints_loaded.clear()
+            memory_management.soft_empty_cache()
+            gc.collect()
+            model_data.set_sd_model(FakeInitialModel())
+            model_data.forge_hash = ''
+            shared.opts.data["sd_checkpoint_hash"] = ''
         raise
 
     timer.record("forge model load")
 
     sd_model.extra_generation_params = {}
     sd_model.comments = []
+    sd_model.forge_preset = str(getattr(opts, 'forge_preset', '') or '').strip().lower()
     sd_model.sd_checkpoint_info = checkpoint_info
     sd_model.filename = checkpoint_info.filename
     sd_model.sd_model_hash = checkpoint_info.calculate_shorthash()

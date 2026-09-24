@@ -1,5 +1,6 @@
 import os
 import enum
+import re
 
 from modules import sd_models, cache, errors, hashes, shared
 
@@ -13,6 +14,7 @@ class SdVersion(enum.Enum):
     SDXL = 4
 #    SD3 = 5
     Flux = 6
+    Krea = 7
 
 class NetworkOnDisk:
     def __init__(self, name, filename):
@@ -52,18 +54,40 @@ class NetworkOnDisk:
         self.sd_version = self.detect_version()
     
     def detect_version(self):
-        if str(self.metadata.get('modelspec.implementation', '')) == 'https://github.com/black-forest-labs/flux':
+        implementation = str(self.metadata.get('modelspec.implementation', '')).lower().rstrip('/')
+        architecture = str(self.metadata.get('modelspec.architecture', '')).lower()
+        base_model_version = str(self.metadata.get('ss_base_model_version', '')).lower()
+
+        if architecture in {
+            'krea-2/lora',
+            'krea2/lora',
+            'krea-ai/krea-2/lora',
+            'krea-ai/krea2/lora',
+        }:
+            return SdVersion.Krea
+        elif architecture == 'flux-1-dev/lora':
             return SdVersion.Flux
-        elif str(self.metadata.get('modelspec.architecture', '')) == 'flux-1-dev/lora':
-            return SdVersion.Flux
-        elif str(self.metadata.get('modelspec.architecture', '')) == 'stable-diffusion-xl-v1-base/lora':
+        elif architecture == 'stable-diffusion-xl-v1-base/lora':
             return SdVersion.SDXL
-        elif str(self.metadata.get('ss_base_model_version', '')).startswith('sdxl_'):
+        elif architecture == 'stable-diffusion-v1/lora':
+            return SdVersion.SD1
+        elif base_model_version.startswith('sdxl_'):
             return SdVersion.SDXL
         elif str(self.metadata.get('ss_v2', '')) == 'True':
             return SdVersion.SD2
-        elif str(self.metadata.get('modelspec.architecture', '')) == 'stable-diffusion-v1/lora':
-            return SdVersion.SD1
+        elif implementation == 'https://github.com/krea-ai/krea-2':
+            return SdVersion.Krea
+        elif implementation == 'https://github.com/black-forest-labs/flux':
+            return SdVersion.Flux
+
+        fallback_identity = ' '.join([
+            self.name,
+            str(self.metadata.get('modelspec.title', '')),
+            str(self.metadata.get('ss_sd_model_name', '')),
+        ]).lower()
+        compact_identity = re.sub(r'[^a-z0-9]', '', fallback_identity)
+        if 'krea2' in compact_identity or 'cocoamixzero' in compact_identity:
+            return SdVersion.Krea
 
         return SdVersion.Unknown
     

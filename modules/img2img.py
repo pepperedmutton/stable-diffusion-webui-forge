@@ -14,7 +14,24 @@ import modules.shared as shared
 import modules.processing as processing
 from modules.ui import plaintext_to_html
 import modules.scripts
-from modules_forge import main_thread
+from modules_forge import main_thread, outpaint
+
+
+IMG2IMG_MODE_BATCH = 5
+IMG2IMG_MODE_OUTPAINT = 6
+
+
+def run_img2img_scripts(p, args, *, skip_forge_outpaint=False):
+    """Run the selected Img2img script, with an optional native Outpaint guard."""
+
+    script_index = args[0] if args else 0
+    if skip_forge_outpaint and script_index:
+        selected_script = modules.scripts.scripts_img2img.selectable_scripts[int(script_index) - 1]
+        if selected_script.title() == "Forge Outpaint":
+            return process_images(p)
+
+    processed = modules.scripts.scripts_img2img.run(p, *args)
+    return process_images(p) if processed is None else processed
 
 
 def process_batch(p, input, output_dir, inpaint_mask_dir, args, to_scale=False, scale_by=1.0, use_png_info=False, png_info_props=None, png_info_dir=None):
@@ -147,11 +164,12 @@ def process_batch(p, input, output_dir, inpaint_mask_dir, args, to_scale=False, 
     return batch_results
 
 
-def img2img_function(id_task: str, request: gr.Request, mode: int, prompt: str, negative_prompt: str, prompt_styles, init_img, sketch, sketch_fg, init_img_with_mask, init_img_with_mask_fg, inpaint_color_sketch, inpaint_color_sketch_fg, init_img_inpaint, init_mask_inpaint, mask_blur: int, mask_alpha: float, inpainting_fill: int, n_iter: int, batch_size: int, cfg_scale: float, distilled_cfg_scale: float, image_cfg_scale: float, denoising_strength: float, selected_scale_tab: int, height: int, width: int, scale_by: float, resize_mode: int, inpaint_full_res: bool, inpaint_full_res_padding: int, inpainting_mask_invert: int, img2img_batch_input_dir: str, img2img_batch_output_dir: str, img2img_batch_inpaint_mask_dir: str, override_settings_texts, img2img_batch_use_png_info: bool, img2img_batch_png_info_props: list, img2img_batch_png_info_dir: str, img2img_batch_source_type: str, img2img_batch_upload: list, *args):
+def img2img_function(id_task: str, request: gr.Request, mode: int, prompt: str, negative_prompt: str, prompt_styles, init_img, sketch, sketch_fg, init_img_with_mask, init_img_with_mask_fg, inpaint_color_sketch, inpaint_color_sketch_fg, init_img_inpaint, init_mask_inpaint, mask_blur: int, mask_alpha: float, inpainting_fill: int, n_iter: int, batch_size: int, cfg_scale: float, distilled_cfg_scale: float, image_cfg_scale: float, denoising_strength: float, selected_scale_tab: int, height: int, width: int, scale_by: float, resize_mode: int, inpaint_full_res: bool, inpaint_full_res_padding: int, inpainting_mask_invert: int, img2img_batch_input_dir: str, img2img_batch_output_dir: str, img2img_batch_inpaint_mask_dir: str, override_settings_texts, img2img_batch_use_png_info: bool, img2img_batch_png_info_props: list, img2img_batch_png_info_dir: str, img2img_batch_source_type: str, img2img_batch_upload: list, outpaint_image, outpaint_region_mode, outpaint_left, outpaint_right, outpaint_top, outpaint_bottom, outpaint_canvas_width, outpaint_canvas_height, outpaint_source_x, outpaint_source_y, outpaint_context_overlap, outpaint_mask_blur, outpaint_fill_mode, outpaint_max_megapixels, *args):
 
     override_settings = create_override_settings_dict(override_settings_texts)
 
-    is_batch = mode == 5
+    is_batch = mode == IMG2IMG_MODE_BATCH
+    is_outpaint = mode == IMG2IMG_MODE_OUTPAINT
 
     height, width = int(height), int(width)
 
@@ -178,6 +196,9 @@ def img2img_function(id_task: str, request: gr.Request, mode: int, prompt: str, 
     elif mode == 4:  # inpaint upload mask
         image = init_img_inpaint
         mask = init_mask_inpaint
+    elif is_outpaint:
+        image = outpaint_image
+        mask = None
 
     if mask and isinstance(mask, Image.Image):
         mask = mask.point(lambda v: 255 if v > 128 else 0)
@@ -185,7 +206,7 @@ def img2img_function(id_task: str, request: gr.Request, mode: int, prompt: str, 
     image = images.fix_image(image)
     mask = images.fix_image(mask)
 
-    if selected_scale_tab == 1 and not is_batch:
+    if selected_scale_tab == 1 and not is_batch and not is_outpaint:
         assert image, "Can't scale by because no image is selected"
 
         width = int(image.width * scale_by)
@@ -242,10 +263,30 @@ def img2img_function(id_task: str, request: gr.Request, mode: int, prompt: str, 
 
             if processed is None:
                 processed = Processed(p, [], p.seed, "")
+        elif is_outpaint:
+            processed = outpaint.run_outpaint(
+                p,
+                outpaint_region_mode,
+                outpaint_left,
+                outpaint_right,
+                outpaint_top,
+                outpaint_bottom,
+                outpaint_canvas_width,
+                outpaint_canvas_height,
+                outpaint_source_x,
+                outpaint_source_y,
+                outpaint_context_overlap,
+                outpaint_mask_blur,
+                outpaint_fill_mode,
+                outpaint_max_megapixels,
+                invoke=lambda: run_img2img_scripts(
+                    p,
+                    args,
+                    skip_forge_outpaint=True,
+                ),
+            )
         else:
-            processed = modules.scripts.scripts_img2img.run(p, *args)
-            if processed is None:
-                processed = process_images(p)
+            processed = run_img2img_scripts(p, args)
 
     shared.total_tqdm.clear()
 
@@ -259,5 +300,5 @@ def img2img_function(id_task: str, request: gr.Request, mode: int, prompt: str, 
     return processed.images + processed.extra_images, generation_info_js, plaintext_to_html(processed.info), plaintext_to_html(processed.comments, classname="comments")
 
 
-def img2img(id_task: str, request: gr.Request, mode: int, prompt: str, negative_prompt: str, prompt_styles, init_img, sketch, sketch_fg, init_img_with_mask, init_img_with_mask_fg, inpaint_color_sketch, inpaint_color_sketch_fg, init_img_inpaint, init_mask_inpaint, mask_blur: int, mask_alpha: float, inpainting_fill: int, n_iter: int, batch_size: int, cfg_scale: float, distilled_cfg_scale: float, image_cfg_scale: float, denoising_strength: float, selected_scale_tab: int, height: int, width: int, scale_by: float, resize_mode: int, inpaint_full_res: bool, inpaint_full_res_padding: int, inpainting_mask_invert: int, img2img_batch_input_dir: str, img2img_batch_output_dir: str, img2img_batch_inpaint_mask_dir: str, override_settings_texts, img2img_batch_use_png_info: bool, img2img_batch_png_info_props: list, img2img_batch_png_info_dir: str, img2img_batch_source_type: str, img2img_batch_upload: list, *args):
-    return main_thread.run_and_wait_result(img2img_function, id_task, request, mode, prompt, negative_prompt, prompt_styles, init_img, sketch, sketch_fg, init_img_with_mask, init_img_with_mask_fg, inpaint_color_sketch, inpaint_color_sketch_fg, init_img_inpaint, init_mask_inpaint, mask_blur, mask_alpha, inpainting_fill, n_iter, batch_size, cfg_scale, distilled_cfg_scale, image_cfg_scale, denoising_strength, selected_scale_tab, height, width, scale_by, resize_mode, inpaint_full_res, inpaint_full_res_padding, inpainting_mask_invert, img2img_batch_input_dir, img2img_batch_output_dir, img2img_batch_inpaint_mask_dir, override_settings_texts, img2img_batch_use_png_info, img2img_batch_png_info_props, img2img_batch_png_info_dir, img2img_batch_source_type, img2img_batch_upload, *args)
+def img2img(id_task: str, request: gr.Request, mode: int, prompt: str, negative_prompt: str, prompt_styles, init_img, sketch, sketch_fg, init_img_with_mask, init_img_with_mask_fg, inpaint_color_sketch, inpaint_color_sketch_fg, init_img_inpaint, init_mask_inpaint, mask_blur: int, mask_alpha: float, inpainting_fill: int, n_iter: int, batch_size: int, cfg_scale: float, distilled_cfg_scale: float, image_cfg_scale: float, denoising_strength: float, selected_scale_tab: int, height: int, width: int, scale_by: float, resize_mode: int, inpaint_full_res: bool, inpaint_full_res_padding: int, inpainting_mask_invert: int, img2img_batch_input_dir: str, img2img_batch_output_dir: str, img2img_batch_inpaint_mask_dir: str, override_settings_texts, img2img_batch_use_png_info: bool, img2img_batch_png_info_props: list, img2img_batch_png_info_dir: str, img2img_batch_source_type: str, img2img_batch_upload: list, outpaint_image, outpaint_region_mode, outpaint_left, outpaint_right, outpaint_top, outpaint_bottom, outpaint_canvas_width, outpaint_canvas_height, outpaint_source_x, outpaint_source_y, outpaint_context_overlap, outpaint_mask_blur, outpaint_fill_mode, outpaint_max_megapixels, *args):
+    return main_thread.run_and_wait_result(img2img_function, id_task, request, mode, prompt, negative_prompt, prompt_styles, init_img, sketch, sketch_fg, init_img_with_mask, init_img_with_mask_fg, inpaint_color_sketch, inpaint_color_sketch_fg, init_img_inpaint, init_mask_inpaint, mask_blur, mask_alpha, inpainting_fill, n_iter, batch_size, cfg_scale, distilled_cfg_scale, image_cfg_scale, denoising_strength, selected_scale_tab, height, width, scale_by, resize_mode, inpaint_full_res, inpaint_full_res_padding, inpainting_mask_invert, img2img_batch_input_dir, img2img_batch_output_dir, img2img_batch_inpaint_mask_dir, override_settings_texts, img2img_batch_use_png_info, img2img_batch_png_info_props, img2img_batch_png_info_dir, img2img_batch_source_type, img2img_batch_upload, outpaint_image, outpaint_region_mode, outpaint_left, outpaint_right, outpaint_top, outpaint_bottom, outpaint_canvas_width, outpaint_canvas_height, outpaint_source_x, outpaint_source_y, outpaint_context_overlap, outpaint_mask_blur, outpaint_fill_mode, outpaint_max_megapixels, *args)

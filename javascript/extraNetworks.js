@@ -15,6 +15,41 @@ function toggleCss(key, css, enable) {
     }
 }
 
+function extraNetworkCardHasKreaIdentity(elem) {
+    const identity = Array.from(elem.querySelectorAll('.search_terms, .description, .name'))
+        .map((part) => part.textContent)
+        .concat(elem.getAttribute('data-name') || '')
+        .join(' ')
+        .toLowerCase();
+    const compactIdentity = identity.replace(/[^a-z0-9]/g, '');
+
+    return compactIdentity.includes('krea2') ||
+        compactIdentity.includes('cocoamixzero') ||
+        /(^|[^a-z0-9])krea([^a-z0-9]|$)/.test(identity);
+}
+
+function extraNetworkCardMatchesPreset(elem, uiPreset, filterDisabled) {
+    if (filterDisabled) return true;
+
+    const sdversion = elem.getAttribute('data-sort-sdversion');
+    if (uiPreset === 'xl') {
+        return sdversion === null ||
+            sdversion === 'SdVersion.Unknown' ||
+            sdversion === 'SdVersion.SDXL';
+    }
+
+    if (uiPreset === 'krea') {
+        if (sdversion === 'SdVersion.Krea' || sdversion === 'SdVersion.Krea2') return true;
+        if (sdversion === null || sdversion === 'SdVersion.Unknown') {
+            return extraNetworkCardHasKreaIdentity(elem);
+        }
+
+        return false;
+    }
+
+    return true;
+}
+
 function setupExtraNetworksForTab(tabname) {
     function registerPrompt(tabname, id) {
         var textarea = gradioApp().querySelector("#" + id + " > label > textarea");
@@ -51,15 +86,9 @@ function setupExtraNetworksForTab(tabname) {
         var applyFilter = function(force) {
             var searchTerm = search.value.toLowerCase();
 
-            // get UI preset
-            radioUI = gradioApp().querySelector('#forge_ui_preset');
-            radioButtons = radioUI.getElementsByTagName('input');
-            UIresult = 3;   //  default to 'all'
-            for (i = 0; i < radioButtons.length; i++) {
-                if (radioButtons[i].checked) {
-                    UIresult = i;
-                }
-            }
+            // Filter only the model family that has reliable metadata in this Forge build.
+            // Preset order can change, so use the semantic radio value instead of its index.
+            const uiPreset = typeof window.getForgePresetValue === "function" ? window.getForgePresetValue() : null;
 
             gradioApp().querySelectorAll('#' + tabname + '_extra_tabs div.card').forEach(function(elem) {
                 var searchOnly = elem.querySelector('.search_only');
@@ -70,24 +99,13 @@ function setupExtraNetworksForTab(tabname) {
                 var visible = true;
                 if (searchOnly && searchTerm.length < 4)    visible = false;
 
-                splitSearch = searchTerm.split(" ");
+                const splitSearch = searchTerm.split(" ");
                 splitSearch.forEach(function(partial) {
                     if (text.indexOf(partial) == -1)        visible = false;
-                })
+                });
 
-                sdversion = elem.getAttribute('data-sort-sdversion');
-                if (sdversion == null) ;
-                else if (sdversion == 'SdVersion.Unknown')  ;
-                else if (opts.lora_filter_disabled == True) ;
-                else if (UIresult == 3) ;   //  'all'
-                else if (UIresult == 0) {   //  'lumina'
-                    if (sdversion != 'SdVersion.Lumina')   visible = false;
-                }
-                else if (UIresult == 1) {   //  'xl'
-                    if (sdversion != 'SdVersion.SDXL')  visible = false;
-                }
-                else if (UIresult == 2) {   //  'flux'
-                    if (sdversion != 'SdVersion.Flux')  visible = false;
+                if (!extraNetworkCardMatchesPreset(elem, uiPreset, opts.lora_filter_disabled === true)) {
+                    visible = false;
                 }
                 
                 if (visible) {
@@ -493,6 +511,10 @@ function clickLoraRefresh() {
         }
     });
 }
+
+// forgePreset.js uses this after preset initialization and switches. An explicit
+// export is required because UI script declarations are not implicit window fields.
+window.clickLoraRefresh = clickLoraRefresh;
 
 function extraNetworksControlRefreshOnClick(event, tabname, extra_networks_tabname) {
     /**

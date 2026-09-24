@@ -1,260 +1,123 @@
-# Stable Diffusion WebUI Forge
+# Stable Diffusion WebUI Forge — personal fork
 
-Stable Diffusion WebUI Forge is a platform on top of [Stable Diffusion WebUI](https://github.com/AUTOMATIC1111/stable-diffusion-webui) (based on [Gradio](https://www.gradio.app/) <a href='https://github.com/gradio-app/gradio'><img src='https://img.shields.io/github/stars/gradio-app/gradio'></a>) to make development easier, optimize resource management, speed up inference, and study experimental features.
+This fork keeps my Qwen Image 2.1, Krea 2, Anima and Illustrious workflows in one Forge installation. It adds model presets, an isolated Qwen runtime, native Outpaint, and an English touch interface for phone browsers.
 
-The name "Forge" is inspired from "Minecraft Forge". This project is aimed at becoming SD WebUI's Forge.
+Based on [Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge) and [AUTOMATIC1111 WebUI](https://github.com/AUTOMATIC1111/stable-diffusion-webui). Model weights are stored separately from this repository.
 
-Forge is currently based on SD-WebUI 1.10.1 at [this commit](https://github.com/AUTOMATIC1111/stable-diffusion-webui/commit/82a973c04367123ae98bd9abdf80d9eda9b910e2). (Because original SD-WebUI is almost static now, Forge will sync with original WebUI every 90 days, or when important fixes.)
+[中文说明](README.zh-CN.md) · [Qwen setup and limitations](docs/QWEN_IMAGE_2_1.md) · [Outpaint](extensions-builtin/forge_outpaint/README.md)
 
-News are moved to this link: [Click here to see the News section](https://github.com/lllyasviel/stable-diffusion-webui-forge/blob/main/NEWS.md)
+## Start in Colab
 
-Chinese README: [README.zh-CN.md](README.zh-CN.md)
+Select a GPU runtime, then mount Google Drive in that runtime. Put your existing model files in `MyDrive/ForgeColab/models`, keeping the same subdirectories as the local Forge `models` folder:
 
-## Fork-Specific Features (This Repository)
-
-This fork focuses on preset-driven support for newer model families in the top-left `UI` selector:
-
-- `qwen`
-- `anima`
-- `lumina`
-- `xl`
-
-The preset also updates default sampler/settings behavior and which extra modules are loaded.
-
-### Model Files Required For First-Time Setup
-
-Put model files in these folders:
-
-- Checkpoints: `models/Stable-diffusion/`
-- Text encoders: `models/text_encoder/`
-- VAE files: `models/VAE/`
-
-The following filenames are the coded defaults used by this fork:
-
-| UI preset | Required checkpoint (models/Stable-diffusion) | Required additional modules | Download source links | Notes |
-|---|---|---|---|---|
-| `qwen` | `qwen_image_fp8_e4m3fn.safetensors` | `models/text_encoder/qwen_2.5_vl_7b_fp8_scaled.safetensors` and `models/VAE/qwen_image_vae.safetensors` | [Comfy-Org/Qwen-Image_ComfyUI](https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/tree/main)<br>[checkpoint](https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_fp8_e4m3fn.safetensors)<br>[text encoder](https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors)<br>[VAE](https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/vae/qwen_image_vae.safetensors) | If checkpoint name contains `qwen`, this profile is auto-detected. |
-| `anima` | `anima-base-v1.0.safetensors` | `models/text_encoder/anima_text_encoder.safetensors` and `models/VAE/anima_vae.safetensors` | [circlestone-labs/Anima](https://huggingface.co/circlestone-labs/Anima/tree/main/split_files)<br>[diffusion model folder](https://huggingface.co/circlestone-labs/Anima/tree/main/split_files/diffusion_models)<br>[text encoder folder](https://huggingface.co/circlestone-labs/Anima/tree/main/split_files/text_encoders)<br>[VAE folder](https://huggingface.co/circlestone-labs/Anima/tree/main/split_files/vae) | If checkpoint name contains `anima`, this profile is auto-detected. The upstream filenames may differ; see rename notes below. |
-| `lumina` | Any Lumina-compatible checkpoint | None (empty additional modules by default) | [Alpha-VLLM/Lumina-Image-2.0](https://huggingface.co/Alpha-VLLM/Lumina-Image-2.0)<br>[Comfy repackaged all-in-one](https://huggingface.co/Comfy-Org/Lumina_Image_2.0_Repackaged/blob/main/all_in_one/lumina_2.safetensors)<br>[Neta-Lumina](https://huggingface.co/neta-art/Neta-Lumina) | This fork adds Lumina settings: max sequence length, sampler shift, CFG normalization. |
-| `xl` | `novaAnimeXL_ilV170.safetensors` | `models/VAE/pppanimixVAE_il.safetensors` | [Civitai search (checkpoint)](https://civitai.com/search/models?query=novaAnimeXL)<br>[Civitai search (VAE)](https://civitai.com/search/models?query=pppanimix%20vae) | Community model names can change by version/uploader. |
-
-### First Run Checklist
-
-1. Download and place required files in the paths above.
-2. Start Forge and select a preset from the top-left `UI` radio group.
-3. In the top bar, verify `Checkpoint` and `VAE/Text Encoder` entries are resolved correctly.
-4. If you use custom filenames, manually select them once; this fork stores per-preset selections for `qwen` and `anima`.
-
-### Notes
-
-- This fork bundles local pipeline config files under `backend/huggingface/...`, so users mainly need model weight files.
-- Lumina checkpoint names containing `lumina` or `neta` are treated as Lumina-family names for UI/model-loading behavior.
-- The old `sd`/`all` preset naming is normalized to `qwen` in this fork.
-- For Anima files from `circlestone-labs/Anima`, map names as:
-  `anima-base-v1.0.safetensors -> anima-base-v1.0.safetensors`,
-  `qwen_3_06b_base.safetensors -> anima_text_encoder.safetensors`,
-  `qwen_image_vae.safetensors -> anima_vae.safetensors`.
-
-# Quick List
-
-[Gradio 4 UI Must Read (TLDR: You need to use RIGHT MOUSE BUTTON to move canvas!)](https://github.com/lllyasviel/stable-diffusion-webui-forge/discussions/853)
-
-[Flux Tutorial (BitsandBytes Models, NF4, "GPU Weight", "Offload Location", "Offload Method", etc)](https://github.com/lllyasviel/stable-diffusion-webui-forge/discussions/981)
-
-[Flux Tutorial 2 (Seperated Full Models, GGUF, Technically Correct Comparison between GGUF and NF4, etc)](https://github.com/lllyasviel/stable-diffusion-webui-forge/discussions/1050)
-
-[Forge Extension List and Extension Replacement List (Temporary)](https://github.com/lllyasviel/stable-diffusion-webui-forge/discussions/1754)
-
-[How to make LoRAs more precise on low-bit models; How to Skip" Patching LoRAs"; How to only load LoRA one time rather than each generation; How to report LoRAs that do not work](https://github.com/lllyasviel/stable-diffusion-webui-forge/discussions/1038)
-
-[Report Flux Performance Problems (TLDR: DO NOT set "GPU Weight" too high! Lower "GPU Weight" solves 99% problems!)](https://github.com/lllyasviel/stable-diffusion-webui-forge/discussions/1181)
-
-[How to solve "Connection errored out" / "Press anykey to continue ..." / etc](https://github.com/lllyasviel/stable-diffusion-webui-forge/discussions/1474)
-
-[(Save Flux BitsandBytes UNet/Checkpoint)](https://github.com/lllyasviel/stable-diffusion-webui-forge/discussions/1224#discussioncomment-10384104)
-
-[LayerDiffuse Transparent Image Editing](https://github.com/lllyasviel/stable-diffusion-webui-forge/discussions/854)
-
-[Tell us what is missing in ControlNet Integrated](https://github.com/lllyasviel/stable-diffusion-webui-forge/discussions/932)
-
-[(Policy) Soft Advertisement Removal Policy](https://github.com/lllyasviel/stable-diffusion-webui-forge/discussions/1286)
-
-(Flux BNB NF4 / GGUF Q8_0/Q5_0/Q5_1/Q4_0/Q4_1 are all natively supported with GPU weight slider and Quene/Async Swap toggle and swap location toggle. All Flux BNB NF4 / GGUF Q8_0/Q5_0/Q4_0 have LoRA support.)
-
-# Installing Forge
-
-**Just use this one-click installation package (with git and python included).**
-
-[>>> Click Here to Download One-Click Package (CUDA 12.1 + Pytorch 2.3.1) <<<](https://github.com/lllyasviel/stable-diffusion-webui-forge/releases/download/latest/webui_forge_cu121_torch231.7z)
-
-Some other CUDA/Torch Versions:
-
-[Forge with CUDA 12.1 + Pytorch 2.3.1](https://github.com/lllyasviel/stable-diffusion-webui-forge/releases/download/latest/webui_forge_cu121_torch231.7z) <- **Recommended**
-
-[Forge with CUDA 12.4 + Pytorch 2.4](https://github.com/lllyasviel/stable-diffusion-webui-forge/releases/download/latest/webui_forge_cu124_torch24.7z) <- **Fastest**, but MSVC may be broken, xformers may not work
-
-[Forge with CUDA 12.1 + Pytorch 2.1](https://github.com/lllyasviel/stable-diffusion-webui-forge/releases/download/latest/webui_forge_cu121_torch21.7z) <- the previously used old environments
-
-After you download, you uncompress, use `update.bat` to update, and use `run.bat` to run.
-
-Note that running `update.bat` is important, otherwise you may be using a previous version with potential bugs unfixed.
-
-![image](https://github.com/lllyasviel/stable-diffusion-webui-forge/assets/19834515/c49bd60d-82bd-4086-9859-88d472582b94)
-
-### Advanced Install
-
-If you are proficient in Git and you want to install Forge as another branch of SD-WebUI, please see [here](https://github.com/continue-revolution/sd-webui-animatediff/blob/forge/master/docs/how-to-use.md#you-have-a1111-and-you-know-git). In this way, you can reuse all SD checkpoints and all extensions you installed previously in your OG SD-WebUI, but you should know what you are doing.
-
-If you know what you are doing, you can also install Forge using same method as SD-WebUI. (Install Git, Python, Git Clone the forge repo `https://github.com/lllyasviel/stable-diffusion-webui-forge.git` and then run webui-user.bat).
-
-### Previous Versions
-
-You can download previous versions [here](https://github.com/lllyasviel/stable-diffusion-webui-forge/discussions/849).
-
-# Forge Status
-
-Based on manual test one-by-one:
-
-| Component                                           | Status                                      | Last Test    |
-|-----------------------------------------------------|---------------------------------------------|--------------|
-| Basic Diffusion                                     | Normal                                      | 2024 Aug 26  |
-| GPU Memory Management System                        | Normal                                      | 2024 Aug 26  |
-| LoRAs                                               | Normal                                      | 2024 Aug 26  |
-| All Preprocessors                                   | Normal                                      | 2024 Aug 26  |
-| All ControlNets                                     | Normal                                      | 2024 Aug 26  |
-| All IP-Adapters                                     | Normal                                      | 2024 Aug 26  |
-| All Instant-IDs                                     | Normal                                      | 2024 July 27 |
-| All Reference-only Methods                          | Normal                                      | 2024 July 27 |
-| All Integrated Extensions                           | Normal                                      | 2024 July 27 |
-| Popular Extensions (Adetailer, etc)                 | Normal                                      | 2024 July 27 |
-| Gradio 4 UIs                                        | Normal                                      | 2024 July 27 |
-| Gradio 4 Forge Canvas                               | Normal                                      | 2024 Aug 26  |
-| LoRA/Checkpoint Selection UI for Gradio 4           | Normal                                      | 2024 July 27 |
-| Photopea/OpenposeEditor/etc for ControlNet          | Normal                                      | 2024 July 27 |
-| Wacom 128 level touch pressure support for Canvas   | Normal                                      | 2024 July 15 |
-| Microsoft Surface touch pressure support for Canvas | Broken, pending fix                         | 2024 July 29 |
-| ControlNets (Union)                                 | Not implemented yet, pending implementation | 2024 Aug 26  |
-| ControlNets (Flux)                                  | Not implemented yet, pending implementation | 2024 Aug 26  |
-| API endpoints (txt2img, img2img, etc)               | Normal, but pending improved Flux support   | 2024 Aug 29  |
-| OFT LoRAs                                           | Broken, pending fix                         | 2024 Sep 9   |
-
-Feel free to open issue if anything is broken and I will take a look every several days. If I do not update this "Forge Status" then it means I cannot reproduce any problem. In that case, fresh re-install should help most.
-
-# UnetPatcher
-
-Below are self-supported **single file** of all codes to implement FreeU V2.
-
-See also `extension-builtin/sd_forge_freeu/scripts/forge_freeu.py`:
-
-```python
-import torch
-import gradio as gr
-
-from modules import scripts
-
-
-def Fourier_filter(x, threshold, scale):
-    # FFT
-    x_freq = torch.fft.fftn(x.float(), dim=(-2, -1))
-    x_freq = torch.fft.fftshift(x_freq, dim=(-2, -1))
-
-    B, C, H, W = x_freq.shape
-    mask = torch.ones((B, C, H, W), device=x.device)
-
-    crow, ccol = H // 2, W // 2
-    mask[..., crow - threshold:crow + threshold, ccol - threshold:ccol + threshold] = scale
-    x_freq = x_freq * mask
-
-    # IFFT
-    x_freq = torch.fft.ifftshift(x_freq, dim=(-2, -1))
-    x_filtered = torch.fft.ifftn(x_freq, dim=(-2, -1)).real
-
-    return x_filtered.to(x.dtype)
-
-
-def patch_freeu_v2(unet_patcher, b1, b2, s1, s2):
-    model_channels = unet_patcher.model.diffusion_model.config["model_channels"]
-    scale_dict = {model_channels * 4: (b1, s1), model_channels * 2: (b2, s2)}
-    on_cpu_devices = {}
-
-    def output_block_patch(h, hsp, transformer_options):
-        scale = scale_dict.get(h.shape[1], None)
-        if scale is not None:
-            hidden_mean = h.mean(1).unsqueeze(1)
-            B = hidden_mean.shape[0]
-            hidden_max, _ = torch.max(hidden_mean.view(B, -1), dim=-1, keepdim=True)
-            hidden_min, _ = torch.min(hidden_mean.view(B, -1), dim=-1, keepdim=True)
-            hidden_mean = (hidden_mean - hidden_min.unsqueeze(2).unsqueeze(3)) / (hidden_max - hidden_min).unsqueeze(2).unsqueeze(3)
-
-            h[:, :h.shape[1] // 2] = h[:, :h.shape[1] // 2] * ((scale[0] - 1) * hidden_mean + 1)
-
-            if hsp.device not in on_cpu_devices:
-                try:
-                    hsp = Fourier_filter(hsp, threshold=1, scale=scale[1])
-                except:
-                    print("Device", hsp.device, "does not support the torch.fft.")
-                    on_cpu_devices[hsp.device] = True
-                    hsp = Fourier_filter(hsp.cpu(), threshold=1, scale=scale[1]).to(hsp.device)
-            else:
-                hsp = Fourier_filter(hsp.cpu(), threshold=1, scale=scale[1]).to(hsp.device)
-
-        return h, hsp
-
-    m = unet_patcher.clone()
-    m.set_model_output_block_patch(output_block_patch)
-    return m
-
-
-class FreeUForForge(scripts.Script):
-    sorting_priority = 12  # It will be the 12th item on UI.
-
-    def title(self):
-        return "FreeU Integrated"
-
-    def show(self, is_img2img):
-        # make this extension visible in both txt2img and img2img tab.
-        return scripts.AlwaysVisible
-
-    def ui(self, *args, **kwargs):
-        with gr.Accordion(open=False, label=self.title()):
-            freeu_enabled = gr.Checkbox(label='Enabled', value=False)
-            freeu_b1 = gr.Slider(label='B1', minimum=0, maximum=2, step=0.01, value=1.01)
-            freeu_b2 = gr.Slider(label='B2', minimum=0, maximum=2, step=0.01, value=1.02)
-            freeu_s1 = gr.Slider(label='S1', minimum=0, maximum=4, step=0.01, value=0.99)
-            freeu_s2 = gr.Slider(label='S2', minimum=0, maximum=4, step=0.01, value=0.95)
-
-        return freeu_enabled, freeu_b1, freeu_b2, freeu_s1, freeu_s2
-
-    def process_before_every_sampling(self, p, *script_args, **kwargs):
-        # This will be called before every sampling.
-        # If you use highres fix, this will be called twice.
-
-        freeu_enabled, freeu_b1, freeu_b2, freeu_s1, freeu_s2 = script_args
-
-        if not freeu_enabled:
-            return
-
-        unet = p.sd_model.forge_objects.unet
-
-        unet = patch_freeu_v2(unet, freeu_b1, freeu_b2, freeu_s1, freeu_s2)
-
-        p.sd_model.forge_objects.unet = unet
-
-        # Below codes will add some logs to the texts below the image outputs on UI.
-        # The extra_generation_params does not influence results.
-        p.extra_generation_params.update(dict(
-            freeu_enabled=freeu_enabled,
-            freeu_b1=freeu_b1,
-            freeu_b2=freeu_b2,
-            freeu_s1=freeu_s1,
-            freeu_s2=freeu_s2,
-        ))
-
-        return
+```text
+MyDrive/ForgeColab/
+├── models/
+│   ├── Stable-diffusion/
+│   ├── text_encoder/
+│   ├── VAE/
+│   ├── Lora/
+│   ├── ControlNet/
+│   └── diffusers/
+├── models-manifest.json    # optional integrity manifest
+├── state/                  # persistent settings, created on first start
+└── outputs/                # generated images, created on first start
 ```
 
-See also [Forge's Unet Implementation](https://github.com/lllyasviel/stable-diffusion-webui-forge/blob/main/backend/nn/unet.py).
+Run this in one **Colab code cell** after Drive is mounted:
 
-# Under Construction
+```python
+from pathlib import Path
+import subprocess
 
-WebUI Forge is now under some constructions, and docs / UI / functionality may change with updates.
+repo = Path("/content/forge-web")
+url = "https://github.com/pepperedmutton/stable-diffusion-webui-forge.git"
+if repo.is_symlink():
+    raise RuntimeError("Use a separate checkout at /content/forge-web.")
+if not repo.exists():
+    subprocess.run(["git", "clone", "--branch", "main", "--single-branch", url, str(repo)], check=True)
+if not (repo / ".git").is_dir():
+    raise RuntimeError("This directory is not a Forge Git clone.")
+origin = subprocess.check_output(["git", "-C", str(repo), "remote", "get-url", "origin"], text=True).strip()
+if origin.rstrip("/").removesuffix(".git") != url.removesuffix(".git"):
+    raise RuntimeError("This checkout belongs to a different repository.")
+
+%run /content/forge-web/colab/start.py --drive-root /content/drive/MyDrive/ForgeColab
+```
+
+The launcher prepares Python 3.10 and the separate Qwen environment, restores the bundled extension sources, links the Drive model folder, and applies the phone interface. It asks for a session password without echoing your input. If you leave it blank, it generates a password and shows it in the notebook output; keep that output private. Open the printed `https://…gradio.live` address in your phone browser and sign in as `forge` with that password. Keep the Colab cell running while using Forge.
+
+The models are read from Drive; this command does **not** upload local models or download missing weights. An existing `models-manifest.json` is checked for missing files and wrong sizes. Add `--verify-sha256` to the `%run` line to verify the checksum of every manifest-listed file, which can take a long time on Drive. Files added later and absent from the manifest are reported as extra files and have no manifest checksum to verify.
+
+The full set of presets requires native BF16 support. Use an L4 or A100 runtime when available; this launcher rejects T4 runtimes because they cannot run the complete model set as configured. Available GPU memory still limits model size and image resolution. The main environment uses PyTorch 2.7.0 and torchvision 0.22.0 with CUDA 12.6 wheels; see the [PyTorch package reference](https://pytorch.org/get-started/previous-versions/).
+
+Colab restricts using web interfaces for content generation on free managed runtimes. Use an eligible paid account with a positive compute-unit balance, subject to the [Colab FAQ](https://research.google.com/colaboratory/faq.html). Runtime availability and duration vary. Stop the cell and disconnect/delete the runtime when finished.
+
+Rerunning the cell reuses the checkout in the current session. It does not overwrite local Git changes or update that checkout automatically. A fresh Colab runtime clones the current `main` branch.
+
+Startup reports missing optional extension dependencies. FaceID needs a compatible `insightface` installation, which this Linux setup does not install automatically. Add `--repair-environment` to the `%run` line to retry environment setup after an interrupted or failed installation; this does not supply missing model weights.
+
+## Model presets
+
+The `UI` selector switches the model family, defaults and relevant controls together. These are the filenames used by the presets; put them in the matching folders on Drive.
+
+| Preset | Main model | Additional files |
+| --- | --- | --- |
+| Qwen Image 2.1 | `diffusers/Qwen-Image-2.1-NF4/`, `Qwen-Image-2.1-INT8/`, or `Qwen-Image-2.1/` | Complete Diffusers directory, including its matching text encoder, tokenizer and VAE |
+| Krea 2 — CocoaMixZero v1.0 | `Stable-diffusion/krea2Cocoamixzero_v10.safetensors` | `text_encoder/qwen3vl_4b_fp8_scaled.safetensors`, `VAE/qwen_image_vae.safetensors` |
+| MiaoMiao Harem — Illustrious v2.0 | `Stable-diffusion/miaomiaoHarem_v20.safetensors` | Optional `VAE/pppanimixVAE_il.safetensors` |
+| MiaoMiao Harem — Anima 1.5 | `Stable-diffusion/miaomiaoHarem_anima15.safetensors` | `text_encoder/anima_text_encoder.safetensors`, `VAE/anima_vae.safetensors` |
+
+Qwen Image 2.1 supports text-to-image and instruction-based image editing. BF16, INT8 and NF4 are selected in the UI and use a separate process so their newer dependencies do not replace Forge's dependencies. The BF16 directory is displayed as `Qwen-Image-2.1-BF16` in the checkpoint selector. Old split Qwen Image checkpoints are not substitutes for these directories.
+
+Qwen mode hides controls it does not implement, including LoRA, ControlNet, traditional denoising strength, negative prompts, high-resolution fix, refiner and Outpaint. Switching to another preset restores that workflow's controls. See the [Qwen notes](docs/QWEN_IMAGE_2_1.md) for download, quantization and local validation details. Model licenses remain separate from the code license.
+
+## Using Forge on a phone
+
+The Colab launcher installs the touch layout automatically. The added controls are in English.
+
+- Parameters start locked. Tap **Edit parameters**, then **Edit value** for a number. **Apply value** commits that number; **Cancel** discards its draft.
+- Dropdowns and checkboxes take effect immediately while unlocked. **Finish editing** locks the controls again; it does not undo changes already applied.
+- Scrolling across a slider does not change its value while locked. Model selectors and other guarded actions require an explicit action.
+- Generation uses a confirmation step and blocks rapid repeat taps. For Outpaint, use **Edit outpaint**, followed by **Apply and lock** or **Discard and lock**.
+- Larger targets, responsive panels and safe-area spacing support portrait and landscape use. The touch guards activate when the browser reports a coarse pointer; mouse-based desktop controls retain their normal behavior.
+
+The original Forge canvas does not gain full pinch-to-zoom or two-finger panning. Use Outpaint's numeric controls for precise placement. Browser gesture emulation has been tested; physical Pixel 8 Pro testing is still required before claiming device-level coverage.
+
+## Local Windows use
+
+For an existing installation, run `webui-user.bat`. This fork's launcher uses the local virtual environment and selects an available port from 7861 through 7870.
+
+For a fresh clone, restore the directories in `colab/vendor/extensions/` into `extensions/`. The bundled `huggingface_guess` snapshot also contains local model-detection changes; preserve it when setting up the dependency under `repositories/`. The Colab launcher handles both steps automatically. See [bundled source provenance](colab/vendor/README.md).
+
+If you need to build Qwen weights locally, use the existing Forge Python environment:
+
+```powershell
+.\venv\Scripts\python.exe .\scripts\setup_qwen21_runtime.py
+.\venv\Scripts\python.exe .\scripts\download_qwen21.py
+.\runtimes\qwen-image-2.1\Scripts\python.exe .\scripts\quantize_qwen21.py --precision nf4
+```
+
+Skip download and quantization when you already have complete matching model directories. The Colab launcher uses those existing directories and does not repeat quantization.
+
+## What this repository includes
+
+- Local Forge changes for model selection, memory release between presets, metadata and control restoration.
+- Qwen Image 2.1 adapter, worker, runtime setup, download and quantization tools.
+- Native Outpaint with pixel-preserving composition and PNG output.
+- Colab setup, persistent Drive state, and the phone touch guards.
+- Source snapshots of Krea 2, Dynamic Prompts, Dynamic Thresholding, IP-Adapter and the locally modified model-detection dependency. Their original licenses and source hashes are retained.
+
+Weights, generated images, private prompts/settings, virtual environments and caches are excluded. Existing upstream Forge features remain available where the selected backend supports them.
+
+## Validation scope
+
+The release check on a clean source export ran 168 Python tests: 165 passed and 3 skipped (two require a local checkpoint, one requires the separate CUDA quantization environment). Outpaint passed 21 tests; the JavaScript Krea checks passed. A separate Chromium touch simulation passed 22 interaction checks. The 1,817 bundled runtime source files matched their SHA-256 manifest. Linux/Python 3.10 dependency metadata resolution also passed for the main environment and its listed extensions.
+
+The repository contains regression tests for preset selection, memory policy, Qwen routing, Outpaint, Colab preparation and mobile interaction safeguards. Setup and patching tests use temporary directories and mocked external installation steps. They do not demonstrate that a Google account obtained a particular GPU, that all packages installed in a live Colab session, or that every model fits that GPU.
+
+The historical Qwen validation notes describe local GPU runs. They are not Colab performance measurements. A live Colab start and image generation remain the final environment check.
+
+## License and attribution
+
+Forge is distributed under [AGPL-3.0](LICENSE.txt). Bundled components retain their own licenses. Upstream project history and credits remain in this repository; the [upstream Forge README](https://github.com/lllyasviel/stable-diffusion-webui-forge#readme) documents the original project.

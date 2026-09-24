@@ -778,6 +778,11 @@ class ScriptRunner:
         return self.inputs
 
     def run(self, p, *args):
+        from modules_forge.qwen21 import selected_for
+        if selected_for(p):
+            from modules.processing import process_images
+            return process_images(p)
+
         script_index = args[0]
 
         if script_index == 0 or script_index is None:

@@ -57,9 +57,22 @@ function switch_to_txt2img() {
     return Array.from(arguments);
 }
 
+const img2imgModeToVisualTab = {
+    0: 0,
+    1: 1,
+    2: 2,
+    6: 3,
+    3: 4,
+    4: 5,
+    5: 6,
+};
+
+const img2imgVisualTabToMode = [0, 1, 2, 6, 3, 4, 5];
+
 function switch_to_img2img_tab(no) {
     gradioApp().querySelector('#tabs').querySelectorAll('button')[1].click();
-    gradioApp().getElementById('mode_img2img').querySelectorAll('button')[no].click();
+    const visualTab = img2imgModeToVisualTab[no];
+    gradioApp().getElementById('mode_img2img').querySelectorAll('button')[visualTab ?? 0].click();
 }
 function switch_to_img2img() {
     switch_to_img2img_tab(0);
@@ -73,6 +86,11 @@ function switch_to_sketch() {
 
 function switch_to_inpaint() {
     switch_to_img2img_tab(2);
+    return Array.from(arguments);
+}
+
+function switch_to_outpaint() {
+    switch_to_img2img_tab(6);
     return Array.from(arguments);
 }
 
@@ -97,6 +115,11 @@ function get_tab_index(tabId) {
     return 0;
 }
 
+function get_img2img_mode() {
+    const visualTab = get_tab_index('mode_img2img');
+    return img2imgVisualTabToMode[visualTab] ?? 0;
+}
+
 function create_tab_index_args(tabId, args) {
     var res = Array.from(args);
     res[0] = get_tab_index(tabId);
@@ -106,7 +129,7 @@ function create_tab_index_args(tabId, args) {
 function get_img2img_tab_index() {
     let res = Array.from(arguments);
     res.splice(-2);
-    res[0] = get_tab_index('mode_img2img');
+    res[0] = get_img2img_mode();
     return res;
 }
 
@@ -383,7 +406,10 @@ function selectVAE(vae) {
 }
 
 function currentImg2imgSourceResolution(w, h, r) {
-    var img = gradioApp().querySelector('#mode_img2img > div[style="display: block;"] :is(img, canvas)');
+    const app = gradioApp();
+    const img = get_img2img_mode() === 6
+        ? app.querySelector('#img2img_outpaint img.forge-image')
+        : app.querySelector('#mode_img2img > div[style="display: block;"] :is(img, canvas)');
     return img ? [img.naturalWidth || img.width, img.naturalHeight || img.height, r] : [0, 0, r];
 }
 

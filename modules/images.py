@@ -624,7 +624,7 @@ def save_image_with_geninfo(image, geninfo, filename, extension=None, existing_p
         image.save(filename, format=image_format, quality=opts.jpeg_quality)
 
 
-def save_image(image, path, basename, seed=None, prompt=None, extension='png', info=None, short_filename=False, no_prompt=False, grid=False, pnginfo_section_name='parameters', p=None, existing_info=None, forced_filename=None, suffix="", save_to_dirs=None):
+def save_image(image, path, basename, seed=None, prompt=None, extension='png', info=None, short_filename=False, no_prompt=False, grid=False, pnginfo_section_name='parameters', p=None, existing_info=None, forced_filename=None, suffix="", save_to_dirs=None, *, skip_stealth_pnginfo=False, finalize_image=None):
     """Save an image.
 
     Args:
@@ -650,6 +650,11 @@ def save_image(image, path, basename, seed=None, prompt=None, extension='png', i
             If specified, `basename` and filename pattern will be ignored.
         save_to_dirs (bool):
             If true, the image will be saved into a subdirectory of `path`.
+        skip_stealth_pnginfo (bool):
+            If true, do not write metadata into image pixels.
+        finalize_image (callable or None):
+            If set, update the image after all before-save callbacks and before it
+            is written. The callable must return a PIL image.
 
     Returns: (fullfn, txt_fullfn)
         fullfn (`str`):
@@ -709,9 +714,15 @@ def save_image(image, path, basename, seed=None, prompt=None, extension='png', i
         pnginfo[pnginfo_section_name] = info
 
     params = script_callbacks.ImageSaveParams(image, p, fullfn, pnginfo)
-    if opts.enable_pnginfo:
+    if opts.enable_pnginfo and not skip_stealth_pnginfo:
         stealth_infotext.add_stealth_pnginfo(params)
     script_callbacks.before_image_saved_callback(params)
+
+    if finalize_image is not None:
+        finalized_image = finalize_image(params.image)
+        if not isinstance(finalized_image, Image.Image):
+            raise TypeError("The image finalizer must return a PIL image.")
+        params.image = finalized_image
 
     image = params.image
     fullfn = params.filename

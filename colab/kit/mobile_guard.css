@@ -1,0 +1,118 @@
+/* This sheet never changes visibility of Forge model-specific controls. */
+#forge-mobile-guard-bar[hidden],
+.forge-mobile-number-edit[hidden] { display: none !important; }
+
+html.forge-mobile-guard-active {
+    scroll-padding-bottom: 96px;
+}
+html.forge-mobile-guard-active body {
+    padding-bottom: calc(88px + env(safe-area-inset-bottom, 0px));
+}
+#forge-mobile-guard-bar {
+    position: fixed;
+    z-index: 12000;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px max(10px, env(safe-area-inset-right, 0px)) calc(8px + env(safe-area-inset-bottom, 0px)) max(10px, env(safe-area-inset-left, 0px));
+    border-top: 2px solid #31846d;
+    background: #102c28;
+    color: #fff;
+    box-shadow: 0 -2px 12px #0004;
+    font: 14px/1.4 system-ui, sans-serif;
+}
+#forge-mobile-guard-bar[data-locked="false"] { background: #493411; border-color: #e1b661; }
+#forge-mobile-guard-status { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+#forge-mobile-guard-bar button,
+#forge-mobile-guard-dialog button {
+    box-sizing: border-box;
+    min-height: 48px;
+    min-width: 96px;
+    padding: 10px 14px;
+    border: 2px solid #73818d;
+    border-radius: 8px;
+    background: #fff;
+    color: #142430;
+    font: 600 16px/1.35 system-ui, sans-serif;
+    touch-action: manipulation;
+}
+#forge-mobile-guard-toggle { flex: 0 0 auto; }
+#forge-mobile-guard-dialog {
+    position: fixed;
+    box-sizing: border-box;
+    inset: 0;
+    width: min(480px, calc(100vw - 24px));
+    max-width: calc(100vw - 24px);
+    height: max-content;
+    max-height: calc(100dvh - 24px);
+    margin: auto;
+    padding: 20px;
+    overflow: auto;
+    overscroll-behavior: contain;
+    border: 2px solid #6b8296;
+    border-radius: 14px;
+    background: #fff;
+    color: #152738;
+    box-shadow: 0 10px 60px #0008;
+    font: 16px/1.5 system-ui, sans-serif;
+}
+#forge-mobile-guard-dialog::backdrop { background: #0009; }
+#forge-mobile-guard-dialog h2 { margin: 0 0 12px; font-size: 20px; line-height: 1.35; overflow-wrap: anywhere; }
+#forge-mobile-guard-dialog p { margin: 10px 0 16px; overflow-wrap: anywhere; }
+#forge-mobile-guard-dialog label { display: block; margin: 14px 0 6px; font-size: 15px; }
+#forge-mobile-guard-draft {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 48px;
+    padding: 10px;
+    border: 2px solid #6b8296;
+    border-radius: 6px;
+    background: #fff;
+    color: #152738;
+    font: 20px/1.25 system-ui, sans-serif;
+}
+#forge-mobile-guard-sign { margin-top: 10px; }
+.forge-mobile-dialog-buttons { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 16px; margin-top: 20px; }
+#forge-mobile-guard-dialog .forge-mobile-error { color: #a01919; font-weight: 600; }
+#forge-mobile-guard-cancel { flex: 1; }
+#forge-mobile-guard-apply { flex: 1; background: #174d76 !important; color: #fff !important; }
+#forge-mobile-guard-dialog button:focus-visible,
+#forge-mobile-guard-bar button:focus-visible,
+.forge-mobile-number-edit:focus-visible { outline: 3px solid #efba36; outline-offset: 3px; }
+html.forge-mobile-guard-active input[type="range"][data-forge-mobile-number] {
+    pointer-events: none;
+    touch-action: pan-y;
+}
+.forge-mobile-number-edit {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 44px;
+    margin-top: 4px;
+    padding: 6px 12px;
+    border: 1px solid #6b8296;
+    border-radius: 6px;
+    color: var(--body-text-color, #203447);
+    background: var(--button-secondary-background-fill, #eef3f7);
+    font: 14px/1.4 system-ui, sans-serif;
+    touch-action: pan-y pinch-zoom;
+}
+html.forge-mobile-parameters-locked .forge-mobile-number-edit { opacity: .72; }
+html.forge-mobile-guard-active input[type="number"][data-forge-mobile-number] {
+    touch-action: pan-y pinch-zoom;
+    -moz-appearance: textfield;
+}
+html.forge-mobile-guard-active input[data-forge-mobile-number]::-webkit-inner-spin-button,
+html.forge-mobile-guard-active input[data-forge-mobile-number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+html.forge-mobile-parameters-locked .forge-drawing-canvas,
+html.forge-mobile-parameters-locked .forge-image,
+html.forge-mobile-parameters-locked .forge-resize-line { touch-action: pan-y pinch-zoom !important; }
+html.forge-mobile-guard-active #context-menu { display: none !important; }
+@media (max-height: 480px) {
+    #forge-mobile-guard-dialog { padding: 12px; margin-top: 8px; margin-bottom: 8px; }
+    #forge-mobile-guard-dialog h2 { font-size: 18px; }
+    .forge-mobile-dialog-buttons { position: sticky; bottom: 0; background: #fff; padding-top: 8px; }
+}
