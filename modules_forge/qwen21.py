@@ -15,10 +15,13 @@ import threading
 import time
 import uuid
 
+from modules.paths_internal import models_path
+
 
 ROOT = Path(__file__).resolve().parents[1]
+MODELS_ROOT = Path(models_path)
 MODEL_NAME = "Qwen-Image-2.1-NF4"
-MODEL_DIR = ROOT / "models" / "diffusers" / MODEL_NAME
+MODEL_DIR = MODELS_ROOT / "diffusers" / MODEL_NAME
 MODEL_PROFILES = {
     "nf4": {"name": MODEL_NAME, "directory": "Qwen-Image-2.1-NF4",
             "runtime": "DiT + TE NF4 (double quantization) / VAE BF16 / CPU offload"},
@@ -48,7 +51,7 @@ def selected_for(p):
 def checkpoint_profile(info):
     precision = getattr(info, "qwen21_precision", "nf4")
     profile = MODEL_PROFILES[precision]
-    model_dir = Path(getattr(info, "model_dir", ROOT / "models" / "diffusers" / profile["directory"]))
+    model_dir = Path(getattr(info, "model_dir", MODELS_ROOT / "diffusers" / profile["directory"]))
     return model_dir, getattr(info, "name", profile["name"]), precision
 
 
@@ -106,7 +109,7 @@ def register_checkpoint():
     from modules import sd_models
 
     for precision, profile in MODEL_PROFILES.items():
-        model_dir = ROOT / "models" / "diffusers" / profile["directory"]
+        model_dir = MODELS_ROOT / "diffusers" / profile["directory"]
         if not model_files_ready(model_dir, precision):
             continue
         info = sd_models.CheckpointInfo(str(model_dir / "model_index.json"))
@@ -132,7 +135,7 @@ def prompt_lengths(prompt):
             from tokenizers import Tokenizer
             tokenizer_path = MODEL_DIR / "processor" / "tokenizer.json"
             if not tokenizer_path.is_file():
-                tokenizer_path = ROOT / "models" / "diffusers" / MODEL_PROFILES["bf16"]["directory"] / "processor" / "tokenizer.json"
+                tokenizer_path = MODELS_ROOT / "diffusers" / MODEL_PROFILES["bf16"]["directory"] / "processor" / "tokenizer.json"
             _tokenizer = Tokenizer.from_file(str(tokenizer_path))
         return len(_tokenizer.encode(str(prompt), add_special_tokens=False).ids), 1024
     except Exception:

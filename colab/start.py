@@ -1,7 +1,7 @@
-"""Install and run this Forge fork in an isolated Colab GPU checkout.
+"""Install and run this Forge fork from persistent Google Drive storage.
 
 In a Colab Python cell, with Drive already mounted:
-    %run /content/forge-web/colab/start.py --drive-root /content/drive/MyDrive/ForgeColab
+    %run /content/drive/MyDrive/ForgeColab/forge/colab/start.py --drive-root /content/drive/MyDrive/ForgeColab
 
 No Android app, Google login automation, keepalive, or model download is used.
 Stop the running cell to stop Forge; disconnect/delete the runtime when finished.
@@ -67,29 +67,27 @@ def validate_environment(root: Path, drive: Path):
         import google.colab  # noqa: F401
     except ImportError as exc:
         raise ValueError("Open the cell in Google Colab, with Drive mounted and a GPU selected") from exc
-    if root.parent != Path("/content") or root == Path("/content/drive") or root.is_symlink():
-        raise ValueError("Clone this fork into a separate directory directly under /content, such as /content/forge-web")
+    mount = Path("/content/drive")
+    if not os.path.ismount(mount) or not (mount / "MyDrive").is_dir():
+        raise ValueError("Mount Google Drive at /content/drive in Colab before running this cell")
+    if not drive.is_relative_to(mount) or drive == mount or not drive.is_dir():
+        raise ValueError("--drive-root must be an existing directory on mounted Google Drive")
+    if root != drive / "forge" or root.is_symlink() or drive.is_symlink():
+        raise ValueError("Clone this fork into the forge/ directory inside --drive-root; source and environments must stay on Drive")
     if not (root / ".git").is_dir() or not (root / "launch.py").is_file():
         raise ValueError("The launcher must run from a complete Git clone of this fork")
     remote = subprocess.check_output(["git", "-C", str(root), "remote", "get-url", "origin"], text=True).strip()
     if not expected_remote(remote):
         raise ValueError("The checkout origin is not pepperedmutton/stable-diffusion-webui-forge; no files were changed")
-    mount = Path("/content/drive")
-    if not os.path.ismount(mount) or not (mount / "MyDrive").is_dir():
-        raise ValueError("Mount Google Drive at /content/drive in Colab before running this cell")
-    if not drive.is_relative_to(mount) or drive == mount or not (drive / "models").is_dir():
-        raise ValueError("--drive-root must be an existing mounted Drive directory containing models/")
-    if drive in root.parents or root in drive.parents:
-        raise ValueError("The checkout and Drive data directories must be separate")
     gpu = subprocess.check_output(["nvidia-smi", "--query-gpu=name,compute_cap,memory.total", "--format=csv,noheader"], text=True)
     print("Attached GPU:", gpu.strip(), flush=True)
     first = gpu.splitlines()[0].split(",")
     if len(first) >= 2 and float(first[1].strip()) < 8.0:
         raise ValueError("This complete setup includes Qwen 2.1 and requires native BF16 (compute capability 8.0+). T4 is unsupported; select a suitable GPU such as L4 or A100")
     free = shutil.disk_usage(root).free / 2**30
-    print(f"Available runtime disk: {free:.1f} GiB. Models stay in Drive unless --cache is specified.", flush=True)
+    print(f"Drive mount-reported free space: {free:.1f} GiB (not your account storage quota). Forge, Python, dependencies and models stay on Drive.", flush=True)
     if free < 15:
-        raise ValueError("At least 15 GiB of free runtime disk is required for the isolated environments")
+        raise ValueError("At least 15 GiB of free Drive space is required for the isolated environments, in addition to model storage")
 
 
 @contextmanager
@@ -112,17 +110,19 @@ def launch_lock(root: Path):
 def claim_runtime(root: Path, drive: Path):
     prepare = helper("colab_prepare")
     marker = prepare.safe_target(root, ".colab/runtime.json")
-    expected = {"format": 1, "root": str(root), "drive_root": str(drive)}
+    if root != drive / "forge":
+        raise ValueError("The persistent checkout must be Drive/forge")
+    expected = {"format": 2, "storage": "drive", "root": str(root), "drive_root": str(drive)}
     if marker.exists():
         if prepare.read_json(marker) != expected:
             raise ValueError("This checkout belongs to different Colab storage. Use a fresh checkout to keep both environments intact")
     else:
-        for relative in ("venv", "runtimes/qwen-image-2.1", ".colab/uv"):
+        for relative in ("venv", "runtimes/qwen-image-2.1", ".colab/uv", ".colab/python"):
             path = prepare.safe_target(root, relative)
             if path.exists():
-                raise ValueError(f"An unmanaged environment already exists: {path}. Use a fresh /content/forge-web checkout")
+                raise ValueError(f"An unmanaged environment already exists: {path}. Use a fresh Drive/forge checkout")
         prepare.atomic_json(marker, expected)
-    for relative in ("venv", "runtimes/qwen-image-2.1", ".colab/uv"):
+    for relative in ("venv", "runtimes/qwen-image-2.1", ".colab/uv", ".colab/python"):
         prepare.safe_target(root, relative)
     if (root / "venv/Scripts/python.exe").exists():
         raise ValueError("A Windows environment must not be reused or modified in Colab")
@@ -308,11 +308,70 @@ def install_uv(root: Path):
     # Colab's notebook interpreter may not ship ensurepip/pythonX.Y-venv.
     # --target keeps uv out of the notebook's and Forge's package environments.
     target = helper("colab_prepare").safe_target(root, ".colab/uv")
+    for candidate in (target / "bin/uv", target / "uv/uv"):
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return candidate
     run([sys.executable, "-m", "pip", "install", "-q", "--no-deps", "--upgrade", "--target", target, "uv==" + UV_VERSION])
     for candidate in (target / "bin/uv", target / "uv/uv"):
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return candidate
     raise ValueError("The private uv installation is missing its Linux executable")
+
+
+def persistent_python(root: Path, uv: Path, env):
+    """Persist a complete managed CPython, including its standard library.
+
+    A venv that points to /root/.local/share/uv would break after a runtime reset.
+    Reuse that first-install bootstrap when available, then copy the interpreter
+    distribution once to Drive. Dependency environments are never copied out.
+    """
+    prepare = helper("colab_prepare")
+    destination = prepare.safe_target(root, ".colab/python")
+    marker = destination / ".forge-python.json"
+    if destination.exists():
+        if not marker.is_file():
+            raise ValueError("The persistent Python directory is unmanaged or incomplete; existing files were preserved")
+        document = prepare.read_json(marker)
+        if document.get("format") != 1 or document.get("version") != "3.10":
+            raise ValueError("The persistent Python marker has an unsupported format")
+        relative = helper("stage_models").relative_path(document.get("executable"))
+        python = prepare.safe_target(destination, relative)
+        if not python.is_file():
+            raise ValueError("Persistent Python is incomplete; its interpreter is missing")
+        return python
+    try:
+        source = subprocess.check_output([str(uv), "python", "find", "--managed-python", "3.10"], text=True, env=env).strip()
+    except subprocess.CalledProcessError:
+        run([uv, "python", "install", "3.10"], env=env)
+        source = subprocess.check_output([str(uv), "python", "find", "--managed-python", "3.10"], text=True, env=env).strip()
+    source = Path(source).resolve()
+    source_root = Path(subprocess.check_output([str(source), "-c", "import sys;print(sys.base_prefix)"], text=True, env=env).strip()).resolve()
+    if not source.is_relative_to(source_root / "bin") or not (source_root / "lib/python3.10").is_dir():
+        raise ValueError("The Python bootstrap is not a complete managed CPython 3.10 distribution")
+    relative = source.relative_to(source_root).as_posix()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = Path(tempfile.mkdtemp(prefix=".python-install-", dir=destination.parent))
+    try:
+        # copytree follows source links into regular copies; Drive hard links
+        # are unsupported. No packages from Forge's venv are copied here.
+        shutil.copytree(source_root, temporary, dirs_exist_ok=True, symlinks=False)
+        prepare.atomic_json(temporary / ".forge-python.json", {"format": 1, "version": "3.10", "executable": relative})
+        run([temporary / relative, "-c", "import sys;assert sys.version_info[:2] == (3,10);print('Persistent CPython 3.10 is executable')"], env=env)
+        temporary.rename(destination)
+    finally:
+        if temporary.exists():
+            shutil.rmtree(temporary)
+    return destination / relative
+
+
+def create_persistent_venv(base_python: Path, directory: Path, env):
+    python = directory / "bin/python"
+    if not python.is_file():
+        # CPython creates lib64 -> lib even with --copies unless it exists.
+        # An ordinary directory also works on Drive mounts without link support.
+        (directory / "lib64").mkdir(parents=True, exist_ok=True)
+        run([base_python, "-m", "venv", "--copies", "--without-pip", directory], env=env)
+    return python
 
 
 def report_optional_components(python: Path, env):
@@ -345,7 +404,9 @@ def install_environments(root: Path, drive: Path, extension_names, repair=False)
                  "HUGGINGFACE_GUESS_REPO", "HUGGINGFACE_GUESS_HASH"):
         env.pop(name, None)
     env.update({"PIP_CONSTRAINT": str(constraints), "GRADIO_ANALYTICS_ENABLED": "False",
-                "GRADIO_TEMP_DIR": str(root / "tmp/gradio"), "PYTHONUNBUFFERED": "1"})
+                "GRADIO_TEMP_DIR": str(root / "tmp/gradio"), "PYTHONUNBUFFERED": "1",
+                "UV_LINK_MODE": "copy", "PIP_NO_CACHE_DIR": "1",
+                "PIP_DISABLE_PIP_VERSION_CHECK": "1", "PYTHONDONTWRITEBYTECODE": "1"})
     qenv = dict(env)
     qenv.pop("PIP_CONSTRAINT", None)
     signature = installation_signature(root, extension_names)
@@ -354,33 +415,52 @@ def install_environments(root: Path, drive: Path, extension_names, repair=False)
     if (root / ".colab/huggingface_guess.json").exists():
         install_dependency_overlay(root)
     if repair or current.get("signature") != signature or not python.is_file() or not qpython.is_file():
-        print("Installing isolated Python 3.10 and pinned CUDA libraries. Initial setup can take several minutes.", flush=True)
+        print("Installing persistent Python 3.10 and CUDA libraries on Drive. Initial setup can take several minutes.", flush=True)
         run(["apt-get", "update", "-qq"])
         run(["apt-get", "install", "-y", "-qq", "git", "build-essential", "libgl1", "libglib2.0-0", "libcairo2-dev", "pkg-config"])
         uv = install_uv(root)
-        if not python.is_file():
-            run([uv, "venv", "--python", "3.10", "--seed", root / "venv"])
+        base_python = persistent_python(root, uv, env)
+        create_persistent_venv(base_python, root / "venv", env)
+        create_persistent_venv(base_python, root / "runtimes/qwen-image-2.1", qenv)
         version = subprocess.check_output([str(python), "-c", "import sys;print('.'.join(map(str,sys.version_info[:2])))"], text=True).strip()
         if version != "3.10":
             raise ValueError("The managed environment is not Python 3.10; use a fresh Colab checkout")
+        run([python, "-m", "ensurepip", "--upgrade"], env=env)
+        # uv seeds newer setuptools; satisfy Forge's pin from PyPI before Triton
+        # resolves its setuptools dependency against the CUDA-only wheel index.
+        run([python, "-m", "pip", "install", "setuptools==69.5.1", "--index-url", "https://pypi.org/simple"], env=env)
         run([python, "-m", "pip", "install", f"torch=={TORCH}", f"torchvision=={TORCHVISION}", "--index-url", CUDA_INDEX], env=env)
         run([python, "-m", "pip", "install", "-r", root / "requirements_versions.txt", "sentencepiece==0.2.1", "opencv-python==4.11.0.86"], env=env)
         run([python, "-c", GPU_PROBE], env=env)
-        run([python, "launch.py", "--exit", "--no-download-sd-model", "--ui-settings-file", drive / "state/config.json"], cwd=root, env=env)
+        run([python, "launch.py", "--exit", "--no-download-sd-model", "--models-dir", drive / "models",
+             "--embeddings-dir", drive / "embeddings", "--ui-settings-file", drive / "state/config.json"], cwd=root, env=env)
         install_dependency_overlay(root)
         run([python, "scripts/setup_qwen21_runtime.py", "--uv", uv], cwd=root, env=qenv)
         run([python, "-c", MAIN_PROBE], env=env)
         run([qpython, "-c", QWEN_PROBE], cwd=root, env=qenv)
-        prepare.atomic_json(marker, {"signature": signature})
     else:
-        print("Reusing the installed environments; checking the attached GPU and imports.", flush=True)
+        print("Reusing Python and both dependency environments directly from Drive; no environment copy or package reinstall.", flush=True)
+        # Native OS libraries belong to the fresh Colab VM, not to a Python venv.
+        # Most Colab images include them; install only missing runtime libraries.
+        missing_native = subprocess.run(["ldconfig", "-p"], capture_output=True, text=True, check=True).stdout
+        if any(name not in missing_native for name in ("libGL.so.1", "libglib-2.0.so.0", "libcairo.so.2")):
+            run(["apt-get", "update", "-qq"])
+            run(["apt-get", "install", "-y", "-qq", "libgl1", "libglib2.0-0", "libcairo2"])
         run([python, "-c", GPU_PROBE], env=env)
         run([python, "-c", MAIN_PROBE], env=env)
         run([qpython, "-c", QWEN_PROBE], cwd=root, env=qenv)
         install_dependency_overlay(root)
+    for interpreter in (python, qpython):
+        run([interpreter, "-c", "import sys,sysconfig;from pathlib import Path;"
+             "expected=Path(sys.argv[1]).resolve();base=Path(sys.argv[2]).resolve();"
+             "assert Path(sys.prefix).resolve()==expected,'Environment is not on Drive';"
+             "assert Path(sys.base_prefix).resolve()==base,'Python base would disappear after a runtime reset';"
+             "assert Path(sysconfig.get_path('purelib')).resolve().is_relative_to(expected),'Packages are outside Drive'",
+             interpreter.parent.parent, root / ".colab/python"], env=env)
     print("Environment imports passed. This is not a guarantee that every optional extension or model can run on the allocated GPU.", flush=True)
     missing = report_optional_components(python, env)
     prepare.atomic_json(prepare.safe_target(root, ".colab/optional-components.json"), missing)
+    prepare.atomic_json(marker, {"signature": signature})
     return python, env
 
 
@@ -509,6 +589,7 @@ def stop_process_group(process):
 def forge_arguments(python: Path, drive: Path, auth: Path):
     return [python, "launch.py", "--skip-prepare-environment", "--share", "--listen",
             "--port", "7860", "--no-download-sd-model", "--gradio-auth-path", auth,
+            "--models-dir", drive / "models", "--embeddings-dir", drive / "embeddings",
             "--ui-settings-file", drive / "state/config.json",
             "--ui-config-file", drive / "state/ui-config.json",
             "--gradio-allowed-path", drive / "outputs"]
@@ -570,7 +651,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--drive-root", type=Path, default=Path("/content/drive/MyDrive/ForgeColab"))
     parser.add_argument("--verify-sha256", action="store_true", help="Read and verify all manifest-listed model bytes; can be slow")
-    parser.add_argument("--cache", action="append", default=[], help="Explicit model directory/file relative to models/; repeat to copy selected weights locally")
+    parser.add_argument("--install-only", action="store_true", help="Install persistent Python environments on Drive without requiring model weights or starting Forge")
     parser.add_argument("--repair-environment", action="store_true", help="Retry package and extension installers without replacing saved settings or model files")
     args = parser.parse_args(argv)
     root, drive = ROOT.resolve(), args.drive_root.expanduser().resolve()
@@ -580,13 +661,19 @@ def main(argv=None):
         ensure_port_available()
         claim_runtime(root, drive)
         verify_vendor_manifest(root)
-        result = helper("stage_models").stage(root, drive, args.cache, args.verify_sha256)
-        print("Model staging:", json.dumps(result), flush=True)
+        if args.install_only:
+            helper("colab_prepare").safe_target(drive, "models").mkdir(parents=True, exist_ok=True)
+        else:
+            result = helper("stage_models").stage(root, drive, verify_sha256=args.verify_sha256)
+            print("Persistent models:", json.dumps(result), flush=True)
         result = helper("colab_prepare").prepare(root, drive)
         print("Persistent settings:", result["settings_directory"], flush=True)
         extensions = install_extensions(root)
         run([sys.executable, KIT / "mobile_patch.py", "--root", root], cwd=root)
         python, env = install_environments(root, drive, extensions, args.repair_environment)
+        if args.install_only:
+            print("Installation complete. Python and both environments are stored on Drive. Rerun without --install-only after models are ready.", flush=True)
+            return
         # The password file is outside the Forge/Drive paths served by Gradio.
         auth, password = write_auth(Path("/content"))
         try:

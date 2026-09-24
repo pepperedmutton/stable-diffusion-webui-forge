@@ -1,0 +1,17 @@
+{
+  "format": 1,
+  "description": "Requested Colab matrix: 8 safetensors checkpoints and 3 Qwen Image 2.1 precision profiles. Novsw is replaced by the existing WAI v150 profile without a duplicate. The five XL models have a built-in VAE. Each available profile runs txt2img and img2img at 512x512. Missing Civitai artifacts are not_ready, not generation failures.",
+  "profiles": [
+    {"id": "xl-janku-v69", "preset": "xl", "model": "JANKUTrainedNoobaiRouwei_v69.safetensors"},
+    {"id": "xl-miaomiao-v20", "preset": "xl", "model": "miaomiaoHarem_v20.safetensors"},
+    {"id": "xl-novaanime-v170", "preset": "xl", "model": "novaAnimeXL_ilV170.safetensors"},
+    {"id": "xl-specustrious-v40", "preset": "xl", "model": "specustrious_v40.safetensors"},
+    {"id": "xl-wai-v150", "preset": "xl", "model": "waiIllustriousSDXL_v150.safetensors"},
+    {"id": "anima-aesthetic-v11", "preset": "anima", "model": "anima_aestheticV11.safetensors"},
+    {"id": "anima-miaomiao-15", "preset": "anima", "model": "miaomiaoHarem_anima15.safetensors"},
+    {"id": "krea-cocoamixzero-v10", "preset": "krea", "model": "krea2Cocoamixzero_v10.safetensors"},
+    {"id": "qwen-nf4", "preset": "qwen", "model": "Qwen-Image-2.1-NF4", "precision": "nf4"},
+    {"id": "qwen-int8", "preset": "qwen", "model": "Qwen-Image-2.1-INT8", "precision": "int8"},
+    {"id": "qwen-bf16", "preset": "qwen", "model": "Qwen-Image-2.1-BF16", "precision": "bf16"}
+  ]
+}

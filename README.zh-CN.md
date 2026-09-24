@@ -6,18 +6,24 @@
 
 ## 在 Colab 安装并启动
 
-先选择支持原生 BF16 的 GPU（例如 L4 或 A100），再在该运行时中挂载 Google Drive。将本机 `models` 文件夹完整复制到 `MyDrive/ForgeColab/models`，保留内部目录结构。模型权重不在 GitHub 中，下面的命令也不会上传本机模型。
+先选择支持原生 BF16 的 GPU（例如 L4 或 A100），再在该运行时中挂载 Google Drive。Forge 源码、完整 Python 解释器、主环境和 Qwen 环境都保存在 `MyDrive/ForgeColab/forge`；模型保存在同级的 `models`，文本嵌入保存在 `embeddings`。模型权重不在 GitHub 中，下面的安装命令也不会上传本机模型。
 
 在 Colab 的一个代码单元中运行：
 
 ```python
 from pathlib import Path
+import os
 import subprocess
 
-repo = Path("/content/forge-web")
+storage = Path("/content/drive/MyDrive/ForgeColab")
+if not os.path.ismount("/content/drive"):
+    raise RuntimeError("Mount Google Drive before installing Forge.")
+storage.mkdir(parents=True, exist_ok=True)
+(storage / "models").mkdir(exist_ok=True)
+repo = storage / "forge"
 url = "https://github.com/pepperedmutton/stable-diffusion-webui-forge.git"
 if repo.is_symlink():
-    raise RuntimeError("Use a separate checkout at /content/forge-web.")
+    raise RuntimeError("Use a real forge directory inside your Drive storage.")
 if not repo.exists():
     subprocess.run(["git", "clone", "--branch", "main", "--single-branch", url, str(repo)], check=True)
 if not (repo / ".git").is_dir():
@@ -26,12 +32,20 @@ origin = subprocess.check_output(["git", "-C", str(repo), "remote", "get-url", "
 if origin.rstrip("/").removesuffix(".git") != url.removesuffix(".git"):
     raise RuntimeError("This checkout belongs to a different repository.")
 
-%run /content/forge-web/colab/start.py --drive-root /content/drive/MyDrive/ForgeColab
+%run /content/drive/MyDrive/ForgeColab/forge/colab/start.py --drive-root /content/drive/MyDrive/ForgeColab --install-only
+```
+
+首次安装不要求模型已齐全，也不会开启公开链接。模型准备完成后，运行下面一行启动：
+
+```python
+%run /content/drive/MyDrive/ForgeColab/forge/colab/start.py --drive-root /content/drive/MyDrive/ForgeColab
 ```
 
 按提示输入本次使用的密码；留空会自动生成密码并显示在笔记本输出中，请勿公开该输出。启动后，在手机浏览器打开输出的 `https://…gradio.live` 链接，用户名为 `forge`。使用过程中保持 Colab 单元运行。
 
-安装器会准备主环境和独立的 Qwen 环境、恢复本机扩展源码、连接 Drive 模型目录，并应用手机版网页布局。设置写入 `MyDrive/ForgeColab/state`，生成结果写入 `MyDrive/ForgeColab/outputs`。它不会自动下载缺少的模型，也不会重新量化已有权重。
+安装器会恢复本机扩展源码并应用手机版网页布局。完整 Python 3.10 保存在 `forge/.colab/python`，主环境保存在 `forge/venv`，Qwen 环境保存在 `forge/runtimes/qwen-image-2.1`。首次安装可能临时下载引导解释器，再将其完整解释器和标准库保存到 Drive；全部模型依赖只安装在 Drive，启动时不复制整套环境到 `/content`。Colab 自带解释器、必要的系统库及临时安装文件仍属于当前虚拟机。
+
+重连后只需挂载同一个 Drive，再运行启动命令，即可直接调用保存的 Python 和依赖。安装器会检查路径和导入结果；新虚拟机缺少必要系统库时会补装。设置写入 `MyDrive/ForgeColab/state`，生成结果写入 `MyDrive/ForgeColab/outputs`。启动器不会自动下载缺少的模型、重新量化已有权重或更新 Git 源码。Drive 读取大量小文件可能较慢；挂载点报告的剩余空间也不等于账号存储配额。
 
 启动时会列出缺少的可选扩展依赖。FaceID 另需兼容的 `insightface`，Linux 安装器不会自动安装它。安装中断或失败后，可在 `%run` 行末添加 `--repair-environment` 重试环境准备；这不会补齐模型权重。
 

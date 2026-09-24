@@ -8,6 +8,7 @@ import io
 import json
 from pathlib import Path
 import queue
+import subprocess
 import sys
 import tempfile
 from types import ModuleType, SimpleNamespace
@@ -42,6 +43,20 @@ def load_function(relative_path, name, namespace):
 
 
 class ModelPrecisionTests(unittest.TestCase):
+    def test_models_dir_flag_routes_qwen_outside_source_checkout(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            models = Path(temporary) / "Drive Models"
+            code = (
+                "import json; from types import SimpleNamespace; from modules_forge import qwen21; "
+                "print(json.dumps([str(qwen21.MODELS_ROOT), str(qwen21.MODEL_DIR), "
+                "str(qwen21.checkpoint_profile(SimpleNamespace(qwen21_precision='bf16'))[0])]))"
+            )
+            result = subprocess.check_output(
+                [sys.executable, "-c", code, "--models-dir", str(models)], cwd=ROOT, text=True
+            )
+            self.assertEqual(json.loads(result), [str(models), str(models / "diffusers" / "Qwen-Image-2.1-NF4"),
+                                                 str(models / "diffusers" / "Qwen-Image-2.1")])
+
     def write_model(self, directory, precision, sharded=(False, False)):
         directory.mkdir(parents=True, exist_ok=True)
         (directory / "model_index.json").write_text(json.dumps({"_class_name": "QwenImage21Pipeline"}))
@@ -110,7 +125,7 @@ class ModelPrecisionTests(unittest.TestCase):
 
         modules = ModuleType("modules")
         modules.sd_models = SimpleNamespace(CheckpointInfo=CheckpointInfo)
-        with tempfile.TemporaryDirectory() as temporary, mock.patch.object(adapter, "ROOT", Path(temporary)):
+        with tempfile.TemporaryDirectory() as temporary, mock.patch.object(adapter, "MODELS_ROOT", Path(temporary) / "models"):
             for precision, profile in adapter.MODEL_PROFILES.items():
                 self.write_model(Path(temporary) / "models" / "diffusers" / profile["directory"], precision)
             with mock.patch.dict(sys.modules, {"modules": modules}):
@@ -127,7 +142,7 @@ class ModelPrecisionTests(unittest.TestCase):
     def test_bf16_weights_cannot_be_registered_under_nf4_name(self):
         modules = ModuleType("modules")
         modules.sd_models = SimpleNamespace(CheckpointInfo=mock.Mock())
-        with tempfile.TemporaryDirectory() as temporary, mock.patch.object(adapter, "ROOT", Path(temporary)):
+        with tempfile.TemporaryDirectory() as temporary, mock.patch.object(adapter, "MODELS_ROOT", Path(temporary) / "models"):
             self.write_model(Path(temporary) / "models" / "diffusers" / "Qwen-Image-2.1-NF4", "bf16")
             with mock.patch.dict(sys.modules, {"modules": modules}):
                 adapter.register_checkpoint()

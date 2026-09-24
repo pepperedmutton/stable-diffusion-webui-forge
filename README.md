@@ -8,10 +8,14 @@ Based on [Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge) and
 
 ## Start in Colab
 
-Select a GPU runtime, then mount Google Drive in that runtime. Put your existing model files in `MyDrive/ForgeColab/models`, keeping the same subdirectories as the local Forge `models` folder:
+Select an L4 or A100 GPU runtime and mount Google Drive. Forge source, Python, both dependency environments, models and outputs are stored persistently under `MyDrive/ForgeColab`:
 
 ```text
 MyDrive/ForgeColab/
+├── forge/                  # persistent Git checkout and extensions
+│   ├── .colab/python/      # complete persistent Python 3.10 distribution
+│   ├── venv/              # main Forge dependencies
+│   └── runtimes/qwen-image-2.1/  # separate Qwen dependencies
 ├── models/
 │   ├── Stable-diffusion/
 │   ├── text_encoder/
@@ -19,6 +23,7 @@ MyDrive/ForgeColab/
 │   ├── Lora/
 │   ├── ControlNet/
 │   └── diffusers/
+├── embeddings/             # textual inversion files
 ├── models-manifest.json    # optional integrity manifest
 ├── state/                  # persistent settings, created on first start
 └── outputs/                # generated images, created on first start
@@ -28,12 +33,18 @@ Run this in one **Colab code cell** after Drive is mounted:
 
 ```python
 from pathlib import Path
+import os
 import subprocess
 
-repo = Path("/content/forge-web")
+storage = Path("/content/drive/MyDrive/ForgeColab")
+if not os.path.ismount("/content/drive"):
+    raise RuntimeError("Mount Google Drive before installing Forge.")
+storage.mkdir(parents=True, exist_ok=True)
+(storage / "models").mkdir(exist_ok=True)
+repo = storage / "forge"
 url = "https://github.com/pepperedmutton/stable-diffusion-webui-forge.git"
 if repo.is_symlink():
-    raise RuntimeError("Use a separate checkout at /content/forge-web.")
+    raise RuntimeError("Use a real forge directory inside your Drive storage.")
 if not repo.exists():
     subprocess.run(["git", "clone", "--branch", "main", "--single-branch", url, str(repo)], check=True)
 if not (repo / ".git").is_dir():
@@ -42,10 +53,18 @@ origin = subprocess.check_output(["git", "-C", str(repo), "remote", "get-url", "
 if origin.rstrip("/").removesuffix(".git") != url.removesuffix(".git"):
     raise RuntimeError("This checkout belongs to a different repository.")
 
-%run /content/forge-web/colab/start.py --drive-root /content/drive/MyDrive/ForgeColab
+%run /content/drive/MyDrive/ForgeColab/forge/colab/start.py --drive-root /content/drive/MyDrive/ForgeColab --install-only
 ```
 
-The launcher prepares Python 3.10 and the separate Qwen environment, restores the bundled extension sources, links the Drive model folder, and applies the phone interface. It asks for a session password without echoing your input. If you leave it blank, it generates a password and shows it in the notebook output; keep that output private. Open the printed `https://…gradio.live` address in your phone browser and sign in as `forge` with that password. Keep the Colab cell running while using Forge.
+This first step installs the persistent environments without requiring weights or opening a public server. The installer restores the bundled extension sources and applies the phone interface. On the first installation, a temporary Python bootstrap may be downloaded, then its complete interpreter and standard library are copied once to Drive. Both dependency environments are installed on Drive with copy mode; they are never copied into `/content` at launch. The notebook interpreter, required operating-system libraries and temporary installation files belong to the Colab VM.
+
+Once the model files are in the directories above, start Forge with:
+
+```python
+%run /content/drive/MyDrive/ForgeColab/forge/colab/start.py --drive-root /content/drive/MyDrive/ForgeColab
+```
+
+The launcher asks for a session password without echoing your input. If you leave it blank, it generates a password and shows it in the notebook output; keep that output private. Open the printed `https://…gradio.live` address in your phone browser and sign in as `forge` with that password. Keep the Colab cell running while using Forge.
 
 The models are read from Drive; this command does **not** upload local models or download missing weights. An existing `models-manifest.json` is checked for missing files and wrong sizes. Add `--verify-sha256` to the `%run` line to verify the checksum of every manifest-listed file, which can take a long time on Drive. Files added later and absent from the manifest are reported as extra files and have no manifest checksum to verify.
 
@@ -53,7 +72,7 @@ The full set of presets requires native BF16 support. Use an L4 or A100 runtime 
 
 Colab restricts using web interfaces for content generation on free managed runtimes. Use an eligible paid account with a positive compute-unit balance, subject to the [Colab FAQ](https://research.google.com/colaboratory/faq.html). Runtime availability and duration vary. Stop the cell and disconnect/delete the runtime when finished.
 
-Rerunning the cell reuses the checkout in the current session. It does not overwrite local Git changes or update that checkout automatically. A fresh Colab runtime clones the current `main` branch.
+After reconnecting, mount the same Drive and run the start command again. It executes the saved Python and dependencies directly from Drive, checking their locations and imports. It does not clone, copy or reinstall the complete environment on every new runtime. Missing native operating-system libraries may still need installation in the new VM. The checkout is not updated automatically, and local Git changes are preserved. Drive's many small-file reads can make startup slower; its mount-reported free space is not the same as your account storage quota.
 
 Startup reports missing optional extension dependencies. FaceID needs a compatible `insightface` installation, which this Linux setup does not install automatically. Add `--repair-environment` to the `%run` line to retry environment setup after an interrupted or failed installation; this does not supply missing model weights.
 

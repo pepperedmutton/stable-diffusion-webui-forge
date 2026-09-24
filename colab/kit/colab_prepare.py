@@ -1,4 +1,8 @@
-"""Normalize migrated settings and persist them in Drive, without editing source."""
+"""Normalize settings for Drive/ForgeColab/{forge,models,embeddings,state,outputs}.
+
+Forge reads the sibling model and embedding directories through launch arguments.
+No model links or runtime copies are created here.
+"""
 from __future__ import annotations
 
 import argparse
@@ -9,6 +13,7 @@ import re
 import tempfile
 
 WINDOWS_ROOT = "D:/Forge/stable-diffusion-webui-forge"
+DEFAULT_CHECKPOINT = "waiIllustriousSDXL_v150.safetensors"
 STATE_FILES = ("config.json", "ui-config.json")
 OUTPUT_FOLDERS = {
     "outdir_txt2img_samples": "txt2img-images",
@@ -67,20 +72,34 @@ def read_json(path: Path) -> dict:
     return value
 
 
-def remap_path(value, root: Path, warnings: list[str], label: str):
+def remap_path(value, root: Path, warnings: list[str], label: str, drive_root: Path | None = None):
+    drive_root = drive_root if drive_root is not None else root.parent
     if isinstance(value, list):
-        return [remap_path(item, root, warnings, label) for item in value]
+        return [remap_path(item, root, warnings, label, drive_root) for item in value]
     if not isinstance(value, str) or not value:
         return value
     normalized = re.sub(r"\\+", "/", value)
     current = root.as_posix()
-    if normalized == current or normalized.startswith(current + "/"):
-        return normalized
-    for old in (WINDOWS_ROOT, "/content/forge-web", "/content/forge"):
+    def relocated(suffix):
+        parts = suffix.lstrip("/").split("/", 1)
+        if parts[0].casefold() in {"models", "embeddings"}:
+            base = (drive_root / parts[0].casefold()).as_posix()
+            return base + ("/" + parts[1] if len(parts) == 2 else "")
+        return current + ("/" + suffix.lstrip("/") if suffix else "")
+
+    # Already migrated sibling paths are stable. Source-relative models and
+    # embeddings are remapped too, because --models-dir does not rewrite JSON.
+    for folder in ("models", "embeddings"):
+        sibling = (drive_root / folder).as_posix()
+        if normalized == sibling or normalized.startswith(sibling + "/"):
+            return normalized
+        if normalized.casefold() == folder or normalized.casefold().startswith(folder + "/"):
+            return relocated(normalized)
+    for old in (current, WINDOWS_ROOT, "/content/forge-web", "/content/forge"):
         if normalized.casefold() == old.casefold():
             return current
         if normalized.casefold().startswith(old.casefold() + "/"):
-            return current + normalized[len(old):]
+            return relocated(normalized[len(old):])
     if re.match(r"^[A-Za-z]:/", normalized) or normalized.startswith("//"):
         warnings.append(f"Unmapped Windows path in {label}: {value}")
     return normalized
@@ -92,11 +111,11 @@ def normalize_settings(config: dict, ui: dict, root: Path, drive_root: Path, fir
     config["forge_canvas_toolbar_always"] = True
     for key, value in list(config.items()):
         if key in PATH_OPTIONS or key.startswith(("forge_additional_modules", "forge_checkpoint_")):
-            config[key] = remap_path(value, root, warnings, key)
+            config[key] = remap_path(value, root, warnings, key, drive_root)
     for key, value in list(ui.items()):
         parts = key.rsplit("/", 2)
         if len(parts) == 3 and parts[-1] == "value" and parts[-2].casefold() in UI_PATH_LABELS:
-            ui[key] = remap_path(value, root, warnings, key)
+            ui[key] = remap_path(value, root, warnings, key, drive_root)
     # Only path-valued settings are remapped; prompts and metadata stay verbatim.
     config["outdir_samples"] = ""
     config["outdir_grids"] = ""
@@ -112,18 +131,30 @@ def normalize_settings(config: dict, ui: dict, root: Path, drive_root: Path, fir
         if "/GPU Weights (MB)/" in key:
             removed.append(key)
             del ui[key]
+    # The only requested model substitution is Novsw -> the existing WAI v150.
+    # Preserve all other explicit selections, including an existing Qwen choice.
+    def is_novsw(value):
+        name = str(value or "").replace("\\", "/").rsplit("/", 1)[-1]
+        name = re.sub(r"\s*\[[a-fA-F0-9]+\]$", "", name)
+        return name.casefold() in {"novsw", "novsw.safetensors"}
+
+    current = config.get("sd_model_checkpoint")
+    replace_current = is_novsw(current)
+    wai_exists = (drive_root / "models/Stable-diffusion" / DEFAULT_CHECKPOINT).is_file()
+    if replace_current and not wai_exists:
+        raise ValueError("Download WAI Illustrious SDXL v150 to Drive/models before replacing the Novsw selection")
+    if replace_current or (not current and wai_exists):
+        config.update({
+            "forge_preset": "xl", "sd_model_checkpoint": DEFAULT_CHECKPOINT,
+            "forge_checkpoint_xl": DEFAULT_CHECKPOINT,
+            "forge_additional_modules": [], "forge_additional_modules_xl": [],
+            "forge_additional_modules_xl_configured": False,
+        })
+    elif is_novsw(config.get("forge_checkpoint_xl")):
+        config["forge_checkpoint_xl"] = DEFAULT_CHECKPOINT
+        config["forge_additional_modules_xl"] = []
+        config["forge_additional_modules_xl_configured"] = False
     if first_run:
-        # Select Qwen only when those uploaded weights are actually present.
-        # This does not download a model or replace an existing Drive selection.
-        if (drive_root / "models/diffusers/Qwen-Image-2.1-NF4/model_index.json").is_file():
-            config.update({
-                "forge_preset": "qwen", "forge_qwen21_precision": "nf4",
-                "forge_checkpoint_qwen": "Qwen-Image-2.1-NF4",
-                "sd_model_checkpoint": "Qwen-Image-2.1-NF4",
-                "forge_qwen21_profile_version": 2,
-                "forge_additional_modules": [], "forge_additional_modules_qwen": [],
-                "qwen21_t2i_steps": 20, "qwen21_i2i_steps": 20,
-            })
         for tab in ("txt2img", "img2img"):
             for label in ("Width", "Height"):
                 ui[f"{tab}/{label}/value"] = 512
@@ -134,13 +165,19 @@ def normalize_settings(config: dict, ui: dict, root: Path, drive_root: Path, fir
 
 
 def prepare(root: Path, drive_root: Path) -> dict:
+    if root.is_symlink() or drive_root.is_symlink():
+        raise ValueError("Forge and Drive storage paths must not be symlinks")
     root, drive = root.resolve(), drive_root.resolve()
-    if root == drive or root in drive.parents or drive in root.parents:
-        raise ValueError("Forge and Drive storage must be separate directories")
+    if root != drive / "forge":
+        raise ValueError("Forge source must be the forge/ directory directly inside --drive-root")
     if not (root / "launch.py").is_file():
         raise ValueError(f"Forge launch.py is missing: {root}")
     # Validate every write target before creating or replacing anything.
     outputs = safe_target(drive, "outputs")
+    embeddings = safe_target(drive, "embeddings")
+    model_directory = safe_target(drive, "models")
+    if not model_directory.is_dir():
+        raise ValueError("Drive/models is missing; download models before starting")
     safe_target(root, "tmp/gradio")
     local = [safe_target(root, name) for name in STATE_FILES]
     targets = [safe_target(drive, "state/" + name) for name in STATE_FILES]
@@ -154,10 +191,12 @@ def prepare(root: Path, drive_root: Path) -> dict:
     # A fresh Git clone has no personal config files. Existing local files are
     # read as migration input only; Forge runs directly against Drive/state.
     outputs.mkdir(parents=True, exist_ok=True)
+    embeddings.mkdir(parents=True, exist_ok=True)
     (root / "tmp/gradio").mkdir(parents=True, exist_ok=True)
     changed = [str(path) for path, value in zip(targets, (config, ui)) if atomic_json(path, value)]
     summary = {
         "settings_directory": str(drive / "state"), "outputs_directory": str(outputs),
+        "models_directory": str(model_directory), "embeddings_directory": str(embeddings),
         "first_run_defaults_applied": first_run, "removed_gpu_settings": removed,
         "changed_files": changed,
     }

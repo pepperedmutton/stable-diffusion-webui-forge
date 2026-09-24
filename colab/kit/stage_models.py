@@ -1,7 +1,8 @@
-"""Link uploaded Drive models; optional integrity checks and explicit local caches.
+"""Validate persistent Drive models for a Drive-resident Forge checkout.
 
-The default reads file sizes, not every byte of a large model collection. No
-model is downloaded, removed from Drive, or copied to Colab unless --cache is set.
+Forge receives Drive/models and Drive/embeddings directly through --models-dir
+and --embeddings-dir. No files are copied, downloaded, linked, or removed. The
+default validates file sizes; --verify-sha256 reads manifest-listed model bytes.
 """
 from __future__ import annotations
 
@@ -11,8 +12,6 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
-import shutil
-import tempfile
 
 
 def sha256(path: Path) -> str:
@@ -36,20 +35,20 @@ def relative_path(value: str) -> str:
 def inventory(drive: Path, verify_sha256: bool = False):
     models = drive / "models"
     if not models.is_dir() or models.is_symlink():
-        raise ValueError("Upload your models to a real Drive/models directory first")
+        raise ValueError("Download models to a real Drive/models directory first")
     files = {}
     for folder, directories, names in os.walk(models, followlinks=False):
         for name in directories:
             if (Path(folder) / name).is_symlink():
-                raise ValueError(f"Copy the contents of model directory symlinks before uploading: {name}")
+                raise ValueError(f"Model directories must contain real files, not symlinks: {name}")
         for name in names:
             source = Path(folder) / name
             relative = relative_path(source.relative_to(models).as_posix())
-            if not source.resolve().is_relative_to(models.resolve()) or not source.is_file():
+            if source.is_symlink() or not source.resolve().is_relative_to(models.resolve()) or not source.is_file():
                 raise ValueError(f"Model file points outside Drive/models: {relative}")
             files[relative] = {"path": relative, "bytes": source.stat().st_size}
     if not files:
-        raise ValueError("Drive/models is empty; upload your existing weights before starting")
+        raise ValueError("Drive/models is empty; download model weights before starting")
     manifest_path = drive / "models-manifest.json"
     if not manifest_path.exists():
         if verify_sha256:
@@ -73,7 +72,7 @@ def inventory(drive: Path, verify_sha256: bool = False):
         if isinstance(size, bool) or not isinstance(size, int) or size < 0:
             raise ValueError(f"Invalid model size: {relative}")
         if relative not in files or files[relative]["bytes"] != size:
-            raise ValueError(f"Model missing or upload incomplete (size mismatch): {relative}")
+            raise ValueError(f"Model missing or download incomplete (size mismatch): {relative}")
         digest = entry.get("sha256")
         if digest is not None and (not isinstance(digest, str) or not re.fullmatch(r"[a-fA-F0-9]{64}", digest)):
             raise ValueError(f"Invalid SHA256 in model manifest: {relative}")
@@ -84,89 +83,53 @@ def inventory(drive: Path, verify_sha256: bool = False):
     return files, {"manifest": True, "listed_files": len(seen), "extra_files": len(files) - len(seen)}
 
 
-def safe_destination(root: Path, relative: str) -> Path:
-    destination = root / "models" / relative
-    cursor = destination.parent
-    while cursor != root:
-        if cursor.is_symlink() or not cursor.resolve().is_relative_to(root):
-            raise ValueError(f"Refusing to write through a model-directory symlink: {cursor}")
-        if cursor.exists() and not cursor.is_dir():
-            raise ValueError(f"A file blocks the model directory: {cursor}")
-        cursor = cursor.parent
-    return destination
+def embeddings_inventory(directory: Path) -> int:
+    """An absent embeddings directory is valid; prepare() creates it in Drive."""
+    if directory.is_symlink() or (directory.exists() and not directory.is_dir()):
+        raise ValueError("Drive/embeddings must be a real directory")
+    if not directory.exists():
+        return 0
+    count = 0
+    for folder, directories, names in os.walk(directory, followlinks=False):
+        for name in directories:
+            if (Path(folder) / name).is_symlink():
+                raise ValueError("Embedding directories must not be symlinks")
+        for name in names:
+            source = Path(folder) / name
+            if source.is_symlink() or not source.is_file() or not source.resolve().is_relative_to(directory.resolve()):
+                raise ValueError("Embedding files must stay inside Drive/embeddings without symlinks")
+            count += 1
+    return count
 
 
 def stage(root: Path, drive_root: Path, cache=(), verify_sha256=False, verify_only=False):
+    if cache:
+        raise ValueError("Local model caching is disabled; Forge reads the persistent Drive/models directory directly")
+    if root.is_symlink() or drive_root.is_symlink():
+        raise ValueError("Forge and Drive storage paths must not be symlinks")
     root, drive = root.resolve(), drive_root.resolve()
-    if root == drive or root in drive.parents or drive in root.parents:
-        raise ValueError("The local Forge root and Drive storage must be separate")
-    if not root.is_dir():
-        raise ValueError("The isolated Forge checkout is missing")
+    if root != drive / "forge":
+        raise ValueError("Forge source must be the forge/ directory directly inside --drive-root")
+    if not root.is_dir() or not (root / "launch.py").is_file():
+        raise ValueError("The persistent Forge checkout is missing launch.py")
     files, verification = inventory(drive, verify_sha256)
-    cache = [relative_path(value.rstrip("/")) for value in cache]
-    for prefix in cache:
-        if not any(path == prefix or path.startswith(prefix + "/") for path in files):
-            raise ValueError(f"Cache selection was not uploaded: {prefix}")
-    if verify_only:
-        return {**verification, "files": len(files), "verification_only": True}
-    plan, needed = [], 0
-    # Validate the entire plan before modifying a single destination.
-    for relative, entry in sorted(files.items()):
-        source, target = drive / "models" / relative, safe_destination(root, relative)
-        caching = any(relative == prefix or relative.startswith(prefix + "/") for prefix in cache)
-        existing_link = target.is_symlink()
-        if existing_link and target.resolve() != source.resolve():
-            raise ValueError(f"An unrelated model link already exists: {target}")
-        if target.exists() and not existing_link:
-            # Keep identical tracked helper files and an already cached model.
-            # A different existing file is never replaced automatically.
-            if not target.is_file() or target.stat().st_size != entry["bytes"]:
-                raise ValueError(f"An existing local model differs; keep it or move it explicitly: {target}")
-            expected = entry.get("sha256") or sha256(source)
-            if sha256(target) != expected:
-                raise ValueError(f"An existing local model differs; keep it or move it explicitly: {target}")
-            continue
-        if caching:
-            needed += entry["bytes"]
-        elif existing_link:
-            continue
-        plan.append((source, target, entry, caching))
-    if needed and needed + 15 * 2**30 > shutil.disk_usage(root).free:
-        raise ValueError(f"The requested cache needs {needed / 2**30:.1f} GiB plus 15 GiB free; choose fewer --cache entries")
-    for source, target, entry, caching in plan:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if not caching:
-            target.symlink_to(source)
-            continue
-        print("Caching model:", entry["path"], flush=True)
-        fd, temporary = tempfile.mkstemp(prefix=".colab-model-", dir=target.parent)
-        os.close(fd)
-        part = Path(temporary)
-        try:
-            shutil.copyfile(source, part)
-            if part.stat().st_size != entry["bytes"]:
-                raise ValueError(f"Incomplete cache copy: {entry['path']}")
-            if entry.get("sha256") and sha256(part) != entry["sha256"]:
-                raise ValueError(f"Cache checksum failed: {entry['path']}")
-            # Atomic replacement replaces the link itself, never its Drive target.
-            part.replace(target)
-        finally:
-            part.unlink(missing_ok=True)
-    return {**verification, "files": len(files), "cached_bytes_this_run": needed,
-            "sha256_checked": bool(verify_sha256), "models_downloaded": 0}
+    embedding_files = embeddings_inventory(drive / "embeddings")
+    return {**verification, "files": len(files), "embedding_files": embedding_files,
+            "models_directory": str(drive / "models"), "embeddings_directory": str(drive / "embeddings"),
+            "verification_only": bool(verify_only), "sha256_checked": bool(verify_sha256),
+            "runtime_model_copies": 0, "model_links_created": 0, "models_downloaded": 0}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--drive-root", type=Path, required=True)
-    parser.add_argument("--cache", action="append", default=[], help="Explicit model path relative to models/; repeatable")
     parser.add_argument("--verify-sha256", action="store_true")
     parser.add_argument("--verify-only", action="store_true")
     args = parser.parse_args()
     if os.name != "posix":
         parser.error("Run against the isolated Linux Colab checkout, not Windows Forge")
-    print(json.dumps(stage(args.root, args.drive_root, args.cache, args.verify_sha256, args.verify_only), indent=2))
+    print(json.dumps(stage(args.root, args.drive_root, verify_sha256=args.verify_sha256, verify_only=args.verify_only), indent=2))
 
 
 if __name__ == "__main__":

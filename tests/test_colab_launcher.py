@@ -59,7 +59,15 @@ class TemporaryTree(unittest.TestCase):
             self.skipTest("Host cannot create symlinks: " + str(error))
 
 
-class SettingsTests(TemporaryTree):
+class DriveLayoutTree(TemporaryTree):
+    def setUp(self):
+        super().setUp()
+        self.root = self.drive / "forge"
+        self.root.mkdir()
+        (self.root / "launch.py").write_text("# persistent source fixture\n")
+
+
+class SettingsTests(DriveLayoutTree):
     def test_fresh_clone_works_without_private_configs(self):
         result = prepare.prepare(self.root, self.drive)
         self.assertTrue(result["first_run_defaults_applied"])
@@ -68,13 +76,59 @@ class SettingsTests(TemporaryTree):
         self.assertEqual(value["outdir_img2img_samples"], (self.drive / "outputs/img2img-images").as_posix())
         self.assertNotIn("forge_preset", value)
         self.assertFalse((self.root / "config.json").exists())
+        self.assertEqual(result["models_directory"], str(self.drive / "models"))
+        self.assertEqual(result["embeddings_directory"], str(self.drive / "embeddings"))
+        self.assertTrue((self.drive / "embeddings").is_dir())
 
-    def test_qwen_defaults_only_with_uploaded_nf4(self):
+    def test_wai_default_with_downloaded_weights(self):
+        self.model("Stable-diffusion/" + prepare.DEFAULT_CHECKPOINT)
         self.model("diffusers/Qwen-Image-2.1-NF4/model_index.json", b"{}")
         prepare.prepare(self.root, self.drive)
         value = prepare.read_json(self.drive / "state/config.json")
-        self.assertEqual(value["forge_qwen21_precision"], "nf4")
-        self.assertEqual(value["sd_model_checkpoint"], "Qwen-Image-2.1-NF4")
+        self.assertEqual(value["forge_preset"], "xl")
+        self.assertEqual(value["sd_model_checkpoint"], prepare.DEFAULT_CHECKPOINT)
+        self.assertEqual(value["forge_additional_modules"], [])
+
+    def test_wai_default_after_install_created_state_before_download(self):
+        prepare.prepare(self.root, self.drive)
+        self.assertNotIn("sd_model_checkpoint", prepare.read_json(self.drive / "state/config.json"))
+        self.model("Stable-diffusion/" + prepare.DEFAULT_CHECKPOINT)
+        result = prepare.prepare(self.root, self.drive)
+        self.assertFalse(result["first_run_defaults_applied"])
+        value = prepare.read_json(self.drive / "state/config.json")
+        self.assertEqual(value["sd_model_checkpoint"], prepare.DEFAULT_CHECKPOINT)
+        self.assertEqual(value["forge_preset"], "xl")
+
+    def test_migrated_novsw_is_replaced_by_wai_only(self):
+        self.model("Stable-diffusion/" + prepare.DEFAULT_CHECKPOINT)
+        config = {"sd_model_checkpoint": "D:/Forge/stable-diffusion-webui-forge/models/Stable-diffusion/Novsw.safetensors [abcd1234]", "forge_additional_modules": ["old-vae"], "forge_preset": "xl"}
+        source = self.root / "config.json"
+        source.write_text(json.dumps(config))
+        original = source.read_bytes()
+        prepare.prepare(self.root, self.drive)
+        value = prepare.read_json(self.drive / "state/config.json")
+        self.assertEqual(value["sd_model_checkpoint"], prepare.DEFAULT_CHECKPOINT)
+        self.assertEqual(value["forge_checkpoint_xl"], prepare.DEFAULT_CHECKPOINT)
+        self.assertEqual(value["forge_additional_modules"], [])
+        self.assertFalse(value["forge_additional_modules_xl_configured"])
+        self.assertEqual(source.read_bytes(), original)
+
+    def test_other_migrated_selection_is_preserved(self):
+        self.model("Stable-diffusion/" + prepare.DEFAULT_CHECKPOINT)
+        config = {"sd_model_checkpoint": "Qwen-Image-2.1-INT8", "forge_preset": "qwen", "forge_qwen21_precision": "int8", "forge_checkpoint_xl": "Novsw.safetensors"}
+        (self.root / "config.json").write_text(json.dumps(config))
+        prepare.prepare(self.root, self.drive)
+        value = prepare.read_json(self.drive / "state/config.json")
+        self.assertEqual(value["sd_model_checkpoint"], config["sd_model_checkpoint"])
+        self.assertEqual(value["forge_preset"], "qwen")
+        self.assertEqual(value["forge_qwen21_precision"], "int8")
+        self.assertEqual(value["forge_checkpoint_xl"], prepare.DEFAULT_CHECKPOINT)
+
+    def test_missing_wai_does_not_persist_invalid_novsw_selection(self):
+        (self.root / "config.json").write_text(json.dumps({"sd_model_checkpoint": "Novsw.safetensors"}))
+        with self.assertRaisesRegex(ValueError, "Download WAI"):
+            prepare.prepare(self.root, self.drive)
+        self.assertFalse((self.drive / "state").exists())
 
     def test_saved_values_and_prompts_survive_a_restart(self):
         prepare.prepare(self.root, self.drive)
@@ -94,8 +148,26 @@ class SettingsTests(TemporaryTree):
     def test_old_and_windows_paths_remap_without_prefix_false_positive(self):
         for old in ("D:\\Forge\\stable-diffusion-webui-forge\\models\\a", "/content/forge/models/a", "/content/forge-web/models/a"):
             with self.subTest(old=old):
-                self.assertEqual(prepare.remap_path(old, self.root, [], "model"), (self.root / "models/a").as_posix())
+                self.assertEqual(prepare.remap_path(old, self.root, [], "model"), (self.drive / "models/a").as_posix())
         self.assertEqual(prepare.remap_path("/content/forgery/a", self.root, [], "model"), "/content/forgery/a")
+
+    def test_relative_and_current_source_models_use_sibling_storage(self):
+        for value in ("models/text_encoder/a.safetensors", (self.root / "models/text_encoder/a.safetensors").as_posix()):
+            self.assertEqual(prepare.remap_path(value, self.root, [], "module"), (self.drive / "models/text_encoder/a.safetensors").as_posix())
+        value = (self.drive / "models/text_encoder/a.safetensors").as_posix()
+        self.assertEqual(prepare.remap_path(value, self.root, [], "module"), value)
+        self.assertEqual(prepare.remap_path("D:/Forge/stable-diffusion-webui-forge/embeddings/a.pt", self.root, [], "input"), (self.drive / "embeddings/a.pt").as_posix())
+        self.assertEqual(prepare.remap_path("/content/forge/extensions/x", self.root, [], "input"), (self.root / "extensions/x").as_posix())
+
+    def test_module_lists_and_batch_paths_migrate_but_prompt_text_does_not(self):
+        config = {"forge_additional_modules_anima": ["D:/Forge/stable-diffusion-webui-forge/models/text_encoder/a.safetensors"], "styles_file": "/content/forge/styles.csv"}
+        ui = {"img2img/Input directory/value": "D:/Forge/stable-diffusion-webui-forge/embeddings", "txt2img/Prompt/value": "models/leave-this-text"}
+        normalized, normalized_ui, _, warnings = prepare.normalize_settings(config, ui, self.root, self.drive, False)
+        self.assertEqual(normalized["forge_additional_modules_anima"], [(self.drive / "models/text_encoder/a.safetensors").as_posix()])
+        self.assertEqual(normalized["styles_file"], (self.root / "styles.csv").as_posix())
+        self.assertEqual(normalized_ui["img2img/Input directory/value"], (self.drive / "embeddings").as_posix())
+        self.assertEqual(normalized_ui["txt2img/Prompt/value"], ui["txt2img/Prompt/value"])
+        self.assertFalse(warnings)
 
     def test_unmapped_paths_fail_before_writing_state(self):
         (self.root / "config.json").write_text(json.dumps({"sd_model_checkpoint": "Z:/private/model"}))
@@ -135,20 +207,37 @@ class SettingsTests(TemporaryTree):
         with self.assertRaises(ValueError):
             prepare.prepare(self.root, self.root / "nested")
 
+    def test_source_must_be_named_forge_directly_inside_storage(self):
+        for root in (self.base / "forge", self.drive, self.drive / "nested/forge"):
+            with self.subTest(root=root):
+                with self.assertRaisesRegex(ValueError, "directly inside"):
+                    prepare.prepare(root, self.drive)
 
-class ModelTests(TemporaryTree):
-    def test_default_links_every_model_without_manifest_or_copy(self):
+    def test_embedding_symlink_rejected_before_state_writes(self):
+        outside = self.base / "outside"
+        outside.mkdir()
+        self.symlink(self.drive / "embeddings", outside, directory=True)
+        with self.assertRaises(ValueError):
+            prepare.prepare(self.root, self.drive)
+        self.assertFalse((self.drive / "state").exists())
+
+
+class ModelTests(DriveLayoutTree):
+    def test_default_reads_direct_drive_paths_without_link_copy_or_hash(self):
         source = self.model()
-        with mock.patch.object(models.shutil, "copyfile", side_effect=AssertionError("Default must not copy weights")):
+        before = source.read_bytes()
+        with mock.patch.object(Path, "symlink_to", side_effect=AssertionError("Never create model links")), mock.patch.object(models, "sha256", side_effect=AssertionError("Default only checks model sizes")):
             result = models.stage(self.root, self.drive)
             models.stage(self.root, self.drive)
-        target = self.root / "models" / source.relative_to(self.drive / "models")
-        self.assertTrue(target.is_symlink())
-        self.assertEqual(target.resolve(), source.resolve())
-        self.assertEqual(result["cached_bytes_this_run"], 0)
+        self.assertFalse((self.root / "models").exists())
+        self.assertEqual(result["models_directory"], str(self.drive / "models"))
+        self.assertEqual(result["embeddings_directory"], str(self.drive / "embeddings"))
+        self.assertEqual(result["runtime_model_copies"], 0)
+        self.assertEqual(result["model_links_created"], 0)
         self.assertEqual(result["models_downloaded"], 0)
+        self.assertEqual(source.read_bytes(), before)
 
-    def test_manifest_size_checked_before_any_link(self):
+    def test_manifest_size_mismatch_leaves_source_tree_untouched(self):
         self.model()
         self.manifest([{"path": "Stable-diffusion/example.safetensors", "bytes": 900}])
         with self.assertRaisesRegex(ValueError, "size mismatch"):
@@ -176,7 +265,8 @@ class ModelTests(TemporaryTree):
         self.model("b.bin")
         result = models.stage(self.root, self.drive)
         self.assertEqual(result["extra_files"], 1)
-        self.assertTrue((self.root / "models/b.bin").is_symlink())
+        self.assertTrue((self.drive / "models/b.bin").is_file())
+        self.assertFalse((self.root / "models").exists())
 
     def test_manifest_traversal_duplicate_and_invalid_size_rejected(self):
         self.model()
@@ -192,13 +282,13 @@ class ModelTests(TemporaryTree):
         with self.assertRaisesRegex(ValueError, "Duplicate"):
             models.stage(self.root, self.drive)
 
-    def test_existing_local_model_preserved_and_conflict_fails(self):
+    def test_source_checkout_model_placeholders_are_not_used_or_changed(self):
         self.model("a.bin")
         target = self.root / "models/a.bin"
         target.parent.mkdir()
         target.write_bytes(b"user changes")
-        with self.assertRaisesRegex(ValueError, "differs"):
-            models.stage(self.root, self.drive)
+        result = models.stage(self.root, self.drive)
+        self.assertEqual(result["models_directory"], str(self.drive / "models"))
         self.assertEqual(target.read_bytes(), b"user changes")
 
     def test_identical_tracked_helper_kept(self):
@@ -208,31 +298,26 @@ class ModelTests(TemporaryTree):
         models.stage(self.root, self.drive)
         self.assertFalse((self.root / "models/helper.txt").is_symlink())
 
-    def test_cache_is_explicit_and_preserves_drive_target(self):
+    def test_legacy_cache_request_is_rejected_without_copying(self):
         source = self.model("a.bin")
-        models.stage(self.root, self.drive)
-        with mock.patch.object(models.shutil, "disk_usage", return_value=SimpleNamespace(free=100 * 2**30)):
-            result = models.stage(self.root, self.drive, cache=["a.bin"])
-            again = models.stage(self.root, self.drive, cache=["a.bin"])
-        self.assertFalse((self.root / "models/a.bin").is_symlink())
+        with self.assertRaisesRegex(ValueError, "caching is disabled"):
+            models.stage(self.root, self.drive, cache=["a.bin"])
+        self.assertFalse((self.root / "models").exists())
         self.assertEqual(source.read_bytes(), b"weights")
-        self.assertEqual(result["cached_bytes_this_run"], 7)
-        self.assertEqual(again["cached_bytes_this_run"], 0)
 
-    def test_cache_space_preflight_keeps_original_link(self):
+    def test_stage_is_read_only_when_embeddings_are_absent(self):
         self.model("a.bin")
-        models.stage(self.root, self.drive)
-        with mock.patch.object(models.shutil, "disk_usage", return_value=SimpleNamespace(free=1)):
-            with self.assertRaisesRegex(ValueError, "cache needs"):
-                models.stage(self.root, self.drive, cache=["a.bin"])
-        self.assertTrue((self.root / "models/a.bin").is_symlink())
+        before = sorted(str(path.relative_to(self.drive)) for path in self.drive.rglob("*"))
+        result = models.stage(self.root, self.drive)
+        self.assertEqual(result["embedding_files"], 0)
+        self.assertEqual(before, sorted(str(path.relative_to(self.drive)) for path in self.drive.rglob("*")))
 
-    def test_unknown_cache_and_empty_collection_rejected(self):
+    def test_empty_collection_and_wrong_source_layout_rejected(self):
         with self.assertRaisesRegex(ValueError, "empty"):
             models.stage(self.root, self.drive)
         self.model("a.bin")
-        with self.assertRaisesRegex(ValueError, "not uploaded"):
-            models.stage(self.root, self.drive, cache=["missing"])
+        with self.assertRaisesRegex(ValueError, "directly inside"):
+            models.stage(self.base / "forge", self.drive)
 
     def test_verify_only_makes_no_model_directory(self):
         self.model()
@@ -248,23 +333,37 @@ class ModelTests(TemporaryTree):
         with self.assertRaises(ValueError):
             models.stage(self.root, self.drive)
 
-    def test_destination_directory_escape_rejected(self):
+    def test_unused_source_model_symlink_is_not_followed(self):
         self.model("a.bin")
         outside = self.base / "outside"
         outside.mkdir()
         self.symlink(self.root / "models", outside, directory=True)
-        with self.assertRaises(ValueError):
-            models.stage(self.root, self.drive)
+        result = models.stage(self.root, self.drive)
+        self.assertEqual(result["models_directory"], str(self.drive / "models"))
         self.assertEqual(list(outside.iterdir()), [])
 
-    def test_unrelated_destination_link_preserved(self):
+    def test_unrelated_source_model_link_preserved(self):
         self.model("a.bin")
         outside = self.base / "other.bin"
         outside.write_bytes(b"other")
         self.symlink(self.root / "models/a.bin", outside)
-        with self.assertRaisesRegex(ValueError, "unrelated"):
-            models.stage(self.root, self.drive)
+        models.stage(self.root, self.drive)
         self.assertEqual(outside.read_bytes(), b"other")
+
+    def test_embeddings_are_counted_without_copy_and_escapes_rejected(self):
+        self.model()
+        embedding = self.drive / "embeddings" / "example.pt"
+        embedding.parent.mkdir()
+        embedding.write_bytes(b"embedding")
+        result = models.stage(self.root, self.drive)
+        self.assertEqual(result["embedding_files"], 1)
+        self.assertEqual(embedding.read_bytes(), b"embedding")
+        self.assertFalse((self.root / "embeddings").exists())
+        outside = self.base / "other.pt"
+        outside.write_bytes(b"outside")
+        self.symlink(embedding.parent / "escape.pt", outside)
+        with self.assertRaisesRegex(ValueError, "Embedding files"):
+            models.stage(self.root, self.drive)
 
 
 class AuthenticationAndShareTests(TemporaryTree):
@@ -364,7 +463,7 @@ class AuthenticationAndShareTests(TemporaryTree):
         self.assertNotIn("forgepocket", value.lower())
 
 
-class RuntimeAndVendorTests(TemporaryTree):
+class RuntimeAndVendorTests(DriveLayoutTree):
     def extension(self):
         path = self.root / "colab/vendor/extensions/sd-forge-krea2"
         path.mkdir(parents=True)
@@ -375,7 +474,7 @@ class RuntimeAndVendorTests(TemporaryTree):
     def test_runtime_claim_is_idempotent_and_storage_bound(self):
         launcher.claim_runtime(self.root, self.drive)
         launcher.claim_runtime(self.root, self.drive)
-        with self.assertRaisesRegex(ValueError, "different Colab storage"):
+        with self.assertRaisesRegex(ValueError, "persistent checkout"):
             launcher.claim_runtime(self.root, self.base / "another")
 
     def test_unmanaged_environment_never_overwritten(self):
@@ -468,23 +567,126 @@ class RuntimeAndVendorTests(TemporaryTree):
 
     def test_uv_bootstrap_does_not_require_host_venv_or_modify_host_packages(self):
         binary = self.root / ".colab/uv/bin/uv"
-        binary.parent.mkdir(parents=True)
-        binary.write_bytes(b"fixture executable")
-        with mock.patch.object(launcher, "run") as run, mock.patch.object(launcher.os, "access", return_value=True):
+
+        def installed(command):
+            binary.parent.mkdir(parents=True)
+            binary.write_bytes(b"fixture executable")
+
+        with mock.patch.object(launcher, "run", side_effect=installed) as run, mock.patch.object(launcher.os, "access", return_value=True):
             self.assertEqual(launcher.install_uv(self.root), binary)
         command = run.call_args.args[0]
         self.assertIn("--target", command)
         self.assertIn("--no-deps", command)
         self.assertIn("uv==0.8.22", command)
         self.assertNotIn("venv", command)
+        with mock.patch.object(launcher, "run") as run, mock.patch.object(launcher.os, "access", return_value=True):
+            self.assertEqual(launcher.install_uv(self.root), binary)
+        run.assert_not_called()
 
     def test_t4_is_rejected_before_package_installation(self):
         google, colab = ModuleType("google"), ModuleType("google.colab")
         google.colab = colab
         with mock.patch.dict(launcher.sys.modules, {"google": google, "google.colab": colab}), mock.patch.object(launcher.sys, "platform", "linux"), mock.patch.object(Path, "is_dir", return_value=True), mock.patch.object(Path, "is_file", return_value=True), mock.patch.object(Path, "is_symlink", return_value=False), mock.patch.object(launcher.os.path, "ismount", return_value=True), mock.patch.object(launcher.subprocess, "check_output", side_effect=[launcher.REMOTE, "Tesla T4, 7.5, 15360 MiB\n"]), mock.patch.object(launcher.subprocess, "run") as run:
             with self.assertRaisesRegex(ValueError, "T4 is unsupported"):
-                launcher.validate_environment(Path("/content/forge-web"), Path("/content/drive/MyDrive/ForgeColab"))
+                launcher.validate_environment(Path("/content/drive/MyDrive/ForgeColab/forge"), Path("/content/drive/MyDrive/ForgeColab"))
         run.assert_not_called()
+
+    def test_setuptools_constraint_is_satisfied_before_cuda_only_torch_install(self):
+        (self.root / ".colab").mkdir()
+        (self.root / "requirements_versions.txt").write_text("setuptools==69.5.1\n")
+        python = self.root / "venv/bin/python"
+        uv = self.root / ".colab/uv/bin/uv"
+        for existing_environment in (False, True):
+            with self.subTest(existing_environment=existing_environment):
+                if existing_environment:
+                    python.parent.mkdir(parents=True, exist_ok=True)
+                    python.write_bytes(b"managed interpreter fixture")
+                commands = []
+                setuptools_version = "84.0.0"
+
+                def simulated_run(command, **kwargs):
+                    nonlocal setuptools_version
+                    command = list(map(str, command))
+                    commands.append(command)
+                    if command[1:4] == ["-m", "pip", "install"]:
+                        self.assertEqual(command[0], str(python))
+                        constraints = Path(kwargs["env"]["PIP_CONSTRAINT"])
+                        self.assertIn("setuptools==69.5.1", constraints.read_text())
+                        if "setuptools==69.5.1" in command:
+                            self.assertEqual(command[command.index("--index-url") + 1], "https://pypi.org/simple")
+                            setuptools_version = "69.5.1"
+                        if f"torch=={launcher.TORCH}" in command:
+                            self.assertEqual(command[command.index("--index-url") + 1], launcher.CUDA_INDEX)
+                            self.assertEqual(setuptools_version, "69.5.1", "Triton cannot obtain Forge's setuptools pin from the CUDA-only index")
+                    return SimpleNamespace(returncode=0, stdout="")
+
+                with mock.patch.object(launcher, "run", side_effect=simulated_run), mock.patch.object(launcher, "install_uv", return_value=uv), mock.patch.object(launcher, "persistent_python", return_value=self.root / ".colab/python/bin/python3.10"), mock.patch.object(launcher, "installation_signature", return_value="fixture"), mock.patch.object(launcher.subprocess, "check_output", return_value="3.10\n"), mock.patch.object(launcher, "install_dependency_overlay"), mock.patch.object(launcher, "report_optional_components", return_value={}):
+                    result, _ = launcher.install_environments(self.root, self.drive, [], repair=existing_environment)
+                self.assertEqual(result, python)
+                pip_installs = [command for command in commands if command[1:4] == ["-m", "pip", "install"]]
+                self.assertIn("setuptools==69.5.1", pip_installs[0])
+                self.assertIn(f"torch=={launcher.TORCH}", pip_installs[1])
+                self.assertEqual(json.loads((self.root / ".colab/installed.json").read_text())["signature"], "fixture")
+
+    def test_persistent_python_survives_bootstrap_removal_and_uses_no_hardlinks(self):
+        bootstrap = self.base / "temporary-python"
+        source = bootstrap / "bin/python3.10"
+        source.parent.mkdir(parents=True)
+        source.write_bytes(b"ELF fixture")
+        (bootstrap / "lib/python3.10").mkdir(parents=True)
+        (bootstrap / "lib/python3.10/os.py").write_text("# standard library fixture")
+        with mock.patch.object(launcher.subprocess, "check_output", side_effect=[str(source), str(bootstrap)]), mock.patch.object(launcher, "run"), mock.patch.object(launcher.os, "link", side_effect=AssertionError("Drive hard links are unsupported")):
+            persistent = launcher.persistent_python(self.root, Path("uv"), {"UV_LINK_MODE": "copy"})
+        launcher.shutil.rmtree(bootstrap)
+        self.assertEqual(persistent, self.root / ".colab/python/bin/python3.10")
+        self.assertEqual(persistent.read_bytes(), b"ELF fixture")
+        self.assertTrue((self.root / ".colab/python/lib/python3.10/os.py").is_file())
+        with mock.patch.object(launcher.subprocess, "check_output") as query, mock.patch.object(launcher, "run") as run:
+            self.assertEqual(launcher.persistent_python(self.root, Path("uv"), {}), persistent)
+        query.assert_not_called()
+        run.assert_not_called()
+
+    def test_incomplete_persistent_python_is_never_overwritten(self):
+        directory = self.root / ".colab/python"
+        directory.mkdir(parents=True)
+        (directory / "keep.txt").write_text("user data")
+        with self.assertRaisesRegex(ValueError, "unmanaged or incomplete"):
+            launcher.persistent_python(self.root, Path("uv"), {})
+        self.assertEqual((directory / "keep.txt").read_text(), "user data")
+
+    def test_venv_uses_persistent_base_and_copies(self):
+        base = self.root / ".colab/python/bin/python3.10"
+        destination = self.root / "venv"
+        with mock.patch.object(launcher, "run") as run:
+            result = launcher.create_persistent_venv(base, destination, {"UV_LINK_MODE": "copy"})
+        self.assertEqual(result, destination / "bin/python")
+        self.assertTrue((destination / "lib64").is_dir())
+        self.assertFalse((destination / "lib64").is_symlink())
+        self.assertEqual(run.call_args.args[0], [base, "-m", "venv", "--copies", "--without-pip", destination])
+
+    def test_reconnect_reuses_drive_environments_without_installing_or_copying(self):
+        (self.root / ".colab").mkdir()
+        (self.root / "requirements_versions.txt").write_text("setuptools==69.5.1\n")
+        for relative in ("venv/bin/python", "runtimes/qwen-image-2.1/bin/python"):
+            python = self.root / relative
+            python.parent.mkdir(parents=True)
+            python.write_bytes(b"persistent interpreter fixture")
+        (self.root / ".colab/installed.json").write_text(json.dumps({"signature": "fixture"}))
+        with mock.patch.object(launcher, "installation_signature", return_value="fixture"), mock.patch.object(launcher, "run") as run, mock.patch.object(launcher, "install_uv") as bootstrap, mock.patch.object(launcher, "persistent_python") as copy_python, mock.patch.object(launcher, "install_dependency_overlay"), mock.patch.object(launcher, "report_optional_components", return_value={}), mock.patch.object(launcher.subprocess, "run", return_value=SimpleNamespace(stdout="libGL.so.1 libglib-2.0.so.0 libcairo.so.2")):
+            _, env = launcher.install_environments(self.root, self.drive, [])
+        bootstrap.assert_not_called()
+        copy_python.assert_not_called()
+        self.assertEqual(env["UV_LINK_MODE"], "copy")
+        for call in run.call_args_list:
+            self.assertEqual(call.args[0][1], "-c")
+            self.assertTrue(call.args[0][0].is_relative_to(self.root))
+
+    def test_install_only_does_not_require_weights_or_start_public_server(self):
+        with mock.patch.object(launcher, "ROOT", self.root), mock.patch.object(launcher, "validate_environment"), mock.patch.object(launcher, "launch_lock"), mock.patch.object(launcher, "ensure_port_available"), mock.patch.object(launcher, "verify_vendor_manifest"), mock.patch.object(launcher, "install_extensions", return_value=[]), mock.patch.object(launcher, "run"), mock.patch.object(launcher, "install_environments", return_value=(self.root / "venv/bin/python", {})), mock.patch.object(launcher, "write_auth") as auth, mock.patch.object(launcher, "run_forge") as forge:
+            launcher.main(["--drive-root", str(self.drive), "--install-only"])
+        self.assertEqual(list((self.drive / "models").iterdir()), [])
+        auth.assert_not_called()
+        forge.assert_not_called()
 
     def test_optional_missing_features_are_reported_without_claiming_success(self):
         output = SimpleNamespace(stdout='COLAB_OPTIONAL_STATUS={"IP-Adapter FaceID":"ModuleNotFoundError"}\n')
