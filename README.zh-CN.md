@@ -6,6 +6,8 @@
 
 ## 在 Colab 安装并启动
 
+可直接[在 Colab 打开英文 Forge 笔记本](https://colab.research.google.com/github/pepperedmutton/stable-diffusion-webui-forge/blob/main/colab/Forge_Colab.ipynb)，再保存到 Drive。手机上先挂载 Drive，然后从菜单选择安装、下载、量化或日常启动；**全部运行**也只执行所选的一项。以下保留等价的手动操作步骤。
+
 先选择支持原生 BF16 的 GPU（例如 L4 或 A100），再在该运行时中挂载 Google Drive。Forge 源码、完整 Python 解释器、主环境和 Qwen 环境都保存在 `MyDrive/ForgeColab/forge`；模型保存在同级的 `models`，文本嵌入保存在 `embeddings`。模型权重不在 GitHub 中，下面的安装命令也不会上传本机模型。
 
 在 Colab 的一个代码单元中运行：
@@ -55,11 +57,21 @@ finally:
 BF16 权重与 Qwen 独立环境准备好后，在合适的 GPU 上运行两条量化命令。输入和输出都在 Drive，保留原 BF16 文件：
 
 ```python
-!/content/drive/MyDrive/ForgeColab/forge/runtimes/qwen-image-2.1/bin/python /content/drive/MyDrive/ForgeColab/forge/scripts/quantize_qwen21.py --precision nf4 --source /content/drive/MyDrive/ForgeColab/models/diffusers/Qwen-Image-2.1 --output /content/drive/MyDrive/ForgeColab/models/diffusers/Qwen-Image-2.1-NF4
-!/content/drive/MyDrive/ForgeColab/forge/runtimes/qwen-image-2.1/bin/python /content/drive/MyDrive/ForgeColab/forge/scripts/quantize_qwen21.py --precision int8 --source /content/drive/MyDrive/ForgeColab/models/diffusers/Qwen-Image-2.1 --output /content/drive/MyDrive/ForgeColab/models/diffusers/Qwen-Image-2.1-INT8
+from pathlib import Path
+import subprocess
+
+storage = Path("/content/drive/MyDrive/ForgeColab")
+repo = storage / "forge"
+for precision in ("nf4", "int8"):
+    subprocess.run([
+        str(repo / "runtimes/qwen-image-2.1/bin/python"),
+        str(repo / "scripts/quantize_qwen21.py"), "--precision", precision,
+        "--source", str(storage / "models/diffusers/Qwen-Image-2.1"),
+        "--output", str(storage / ("models/diffusers/Qwen-Image-2.1-" + precision.upper())),
+    ], check=True)
 ```
 
-每个输出目录的 `quantization-manifest.json` 记录校验值和重新加载检查。再次执行会复用已验证的完整结果；遇到不完整或不匹配的旧输出会停止，不直接覆盖。旧版分体 Qwen 文件另存于 `models/legacy-qwen-image`，不作为 Qwen Image 2.1 档位。
+某一档量化失败会抛出错误并停止，不继续下一档。每个输出目录的 `quantization-manifest.json` 记录校验值和重新加载检查。再次执行会复用已验证的完整结果；遇到不完整或不匹配的旧输出会停止，不直接覆盖。旧版分体 Qwen 文件另存于 `models/legacy-qwen-image`，不作为 Qwen Image 2.1 档位。
 
 完成后启动 Forge：
 
@@ -73,7 +85,7 @@ BF16 权重与 Qwen 独立环境准备好后，在合适的 GPU 上运行两条�
 
 重连后只需挂载同一个 Drive，再运行启动命令，即可直接调用保存的 Python 和依赖。安装器会检查路径和导入结果；新虚拟机缺少必要系统库时会补装。设置写入 `MyDrive/ForgeColab/state`，生成结果写入 `MyDrive/ForgeColab/outputs`。启动器不会自动下载缺少的模型、重新量化已有权重或更新 Git 源码。Drive 读取大量小文件可能较慢；挂载点报告的剩余空间也不等于账号存储配额。
 
-启动时会列出缺少的可选扩展依赖。FaceID 另需兼容的 `insightface`，Linux 安装器不会自动安装它。安装中断或失败后，可在 `%run` 行末添加 `--repair-environment` 重试环境准备；这不会补齐模型权重。
+启动时会列出缺少的可选扩展依赖。Linux 安装器已包含 `insightface==1.0.1`、`onnx==1.12.0` 和 `onnxruntime==1.23.2`，用于 Forge 默认的 CPU FaceID 预处理；这些固定版本兼容主环境的 protobuf，并避免源码编译。重连后会重新检查导入与 CPU 执行提供程序。FaceID 仍需要实际适配器、图像编码器和人脸分析模型；仅有配套 LoRA 不够。安装中断或失败后，可在 `%run` 行末添加 `--repair-environment` 重试环境准备；这不会补齐模型权重。
 
 该完整模型组合不支持 T4，安装器会提前提示。Colab 对免费托管环境中的内容生成网页界面有限制，请按 [Colab 官方说明](https://research.google.com/colaboratory/faq.html) 使用符合要求且有剩余计算单元的付费环境。GPU 类型与持续运行时间不保证；结束后停止单元并断开、删除运行时。
 

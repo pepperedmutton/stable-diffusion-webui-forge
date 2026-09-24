@@ -8,6 +8,8 @@ Based on [Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge) and
 
 ## Start in Colab
 
+[Open the English Forge notebook in Colab](https://colab.research.google.com/github/pepperedmutton/stable-diffusion-webui-forge/blob/main/colab/Forge_Colab.ipynb). Save a copy to Drive. Its single action menu separates first-time setup from daily launching, and **Run all** executes only the chosen action. The equivalent manual steps follow.
+
 Select an L4 or A100 GPU runtime and mount Google Drive. Forge source, Python, both dependency environments, models and outputs are stored persistently under `MyDrive/ForgeColab`:
 
 ```text
@@ -76,11 +78,21 @@ Omit `--download` to preview the current file list and storage requirement witho
 After the BF16 Qwen bundle and the isolated Qwen environment are ready, create the NF4 and INT8 variants on a suitable GPU. Both commands read BF16 from Drive and write their separate, reusable directories back to Drive:
 
 ```python
-!/content/drive/MyDrive/ForgeColab/forge/runtimes/qwen-image-2.1/bin/python /content/drive/MyDrive/ForgeColab/forge/scripts/quantize_qwen21.py --precision nf4 --source /content/drive/MyDrive/ForgeColab/models/diffusers/Qwen-Image-2.1 --output /content/drive/MyDrive/ForgeColab/models/diffusers/Qwen-Image-2.1-NF4
-!/content/drive/MyDrive/ForgeColab/forge/runtimes/qwen-image-2.1/bin/python /content/drive/MyDrive/ForgeColab/forge/scripts/quantize_qwen21.py --precision int8 --source /content/drive/MyDrive/ForgeColab/models/diffusers/Qwen-Image-2.1 --output /content/drive/MyDrive/ForgeColab/models/diffusers/Qwen-Image-2.1-INT8
+from pathlib import Path
+import subprocess
+
+storage = Path("/content/drive/MyDrive/ForgeColab")
+repo = storage / "forge"
+for precision in ("nf4", "int8"):
+    subprocess.run([
+        str(repo / "runtimes/qwen-image-2.1/bin/python"),
+        str(repo / "scripts/quantize_qwen21.py"), "--precision", precision,
+        "--source", str(storage / "models/diffusers/Qwen-Image-2.1"),
+        "--output", str(storage / ("models/diffusers/Qwen-Image-2.1-" + precision.upper())),
+    ], check=True)
 ```
 
-These conversions preserve the BF16 source and record checksums and reload checks in each output's `quantization-manifest.json`. An already verified conversion is reused. An incomplete or mismatched output is reported for review instead of being overwritten. Legacy split Qwen Image files are retained in `models/legacy-qwen-image`; they are not Qwen Image 2.1 profiles.
+A failed conversion raises an error and stops this cell before the next variant. These conversions preserve the BF16 source and record checksums and reload checks in each output's `quantization-manifest.json`. An already verified conversion is reused. An incomplete or mismatched output is reported for review instead of being overwritten. Legacy split Qwen Image files are retained in `models/legacy-qwen-image`; they are not Qwen Image 2.1 profiles.
 
 Once the model files are in the directories above, start Forge with:
 
@@ -98,7 +110,7 @@ Colab restricts using web interfaces for content generation on free managed runt
 
 After reconnecting, mount the same Drive and run the start command again. It executes the saved Python and dependencies directly from Drive, checking their locations and imports. It does not clone, copy or reinstall the complete environment on every new runtime. Missing native operating-system libraries may still need installation in the new VM. The checkout is not updated automatically, and local Git changes are preserved. Drive's many small-file reads can make startup slower; its mount-reported free space is not the same as your account storage quota.
 
-Startup reports missing optional extension dependencies. FaceID needs a compatible `insightface` installation, which this Linux setup does not install automatically. Add `--repair-environment` to the `%run` line to retry environment setup after an interrupted or failed installation; this does not supply missing model weights.
+Startup reports missing optional extension dependencies. The Linux installer includes `insightface==1.0.1`, `onnx==1.12.0` and `onnxruntime==1.23.2` for Forge's CPU FaceID preprocessing; these pins preserve the main environment's protobuf version and avoid a source compilation. Imports and CPU-provider availability are checked again when reconnecting. FaceID also needs the actual adapter, image encoder and face-analysis model files; a companion LoRA alone is insufficient. Add `--repair-environment` to the `%run` line to retry environment setup after an interrupted or failed installation; this does not supply missing model weights.
 
 ## Model presets
 

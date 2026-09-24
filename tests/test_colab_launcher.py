@@ -578,6 +578,7 @@ class RuntimeAndVendorTests(DriveLayoutTree):
         command = run.call_args.args[0]
         self.assertIn("--target", command)
         self.assertIn("--no-deps", command)
+        self.assertIn("--no-compile", command)
         self.assertIn("uv==0.8.22", command)
         self.assertNotIn("venv", command)
         with mock.patch.object(launcher, "run") as run, mock.patch.object(launcher.os, "access", return_value=True):
@@ -610,8 +611,14 @@ class RuntimeAndVendorTests(DriveLayoutTree):
                     nonlocal setuptools_version, pip_version
                     command = list(map(str, command))
                     commands.append(command)
+                    if "env" in kwargs:
+                        self.assertNotIn("CIVITAI_API_KEY", kwargs["env"])
+                        self.assertEqual(kwargs["env"]["PIP_COMPILE"], "0")
+                        self.assertEqual(kwargs["env"]["PIP_NO_COMPILE"], "0")
+                        self.assertEqual(kwargs["env"]["UV_COMPILE_BYTECODE"], "false")
                     if command[1:4] == ["-m", "pip", "install"]:
                         self.assertEqual(command[0], str(python))
+                        self.assertIn("--no-compile", command)
                         constraints = Path(kwargs["env"]["PIP_CONSTRAINT"])
                         self.assertIn("setuptools==69.5.1", constraints.read_text())
                         if "pip==26.2.1" in command:
@@ -628,7 +635,7 @@ class RuntimeAndVendorTests(DriveLayoutTree):
                             self.assertEqual(setuptools_version, "69.5.1", "Triton cannot obtain Forge's setuptools pin from the CUDA-only index")
                     return SimpleNamespace(returncode=0, stdout="")
 
-                with mock.patch.object(launcher, "run", side_effect=simulated_run), mock.patch.object(launcher, "install_uv", return_value=uv), mock.patch.object(launcher, "persistent_python", return_value=self.root / ".colab/python/bin/python3.10"), mock.patch.object(launcher, "installation_signature", return_value="fixture"), mock.patch.object(launcher.subprocess, "check_output", return_value="3.10\n"), mock.patch.object(launcher, "install_dependency_overlay"), mock.patch.object(launcher, "report_optional_components", return_value={}):
+                with mock.patch.dict(launcher.os.environ, {"PIP_COMPILE": "1", "PIP_NO_COMPILE": "1", "UV_COMPILE_BYTECODE": "true", "CIVITAI_API_KEY": "fixture-do-not-inherit"}), mock.patch.object(launcher, "run", side_effect=simulated_run), mock.patch.object(launcher, "install_uv", return_value=uv), mock.patch.object(launcher, "persistent_python", return_value=self.root / ".colab/python/bin/python3.10"), mock.patch.object(launcher, "installation_signature", return_value="fixture"), mock.patch.object(launcher.subprocess, "check_output", return_value="3.10\n"), mock.patch.object(launcher, "install_dependency_overlay"), mock.patch.object(launcher, "report_optional_components", return_value={}):
                     result, _ = launcher.install_environments(self.root, self.drive, [], repair=existing_environment)
                 self.assertEqual(result, python)
                 pip_installs = [command for command in commands if command[1:4] == ["-m", "pip", "install"]]
@@ -637,6 +644,12 @@ class RuntimeAndVendorTests(DriveLayoutTree):
                 self.assertIn(f"torch=={launcher.TORCH}", pip_installs[2])
                 prepare_command = next(command for command in commands if "launch.py" in command)
                 self.assertEqual(prepare_command[prepare_command.index("--clip-models-path") + 1], str(self.drive / "models/CLIP"))
+                faceid_install = next(command for command in pip_installs if "insightface==1.0.1" in command)
+                self.assertIn("--only-binary=:all:", faceid_install)
+                self.assertIn("onnx==1.12.0", faceid_install)
+                self.assertIn("onnxruntime==1.23.2", faceid_install)
+                self.assertFalse(any("onnxruntime-gpu" in value for value in faceid_install))
+                self.assertLess(commands.index(faceid_install), commands.index(prepare_command))
                 self.assertEqual(json.loads((self.root / ".colab/installed.json").read_text())["signature"], "fixture")
 
     def test_persistent_python_survives_bootstrap_removal_and_uses_no_hardlinks(self):
@@ -688,9 +701,28 @@ class RuntimeAndVendorTests(DriveLayoutTree):
         bootstrap.assert_not_called()
         copy_python.assert_not_called()
         self.assertEqual(env["UV_LINK_MODE"], "copy")
+        self.assertEqual(env["PIP_COMPILE"], "0")
+        self.assertEqual(env["PIP_NO_COMPILE"], "0")
+        self.assertEqual(env["UV_COMPILE_BYTECODE"], "false")
+        self.assertTrue(any(launcher.FACEID_PROBE in call.args[0] for call in run.call_args_list))
         for call in run.call_args_list:
             self.assertEqual(call.args[0][1], "-c")
             self.assertTrue(call.args[0][0].is_relative_to(self.root))
+
+    def test_faceid_probe_requires_the_cpu_provider_used_by_forge(self):
+        app, utils, runtime = ModuleType("insightface.app"), ModuleType("insightface.utils"), ModuleType("onnxruntime")
+        app.FaceAnalysis = lambda: None
+        utils.face_align = SimpleNamespace(norm_crop=lambda: None)
+        versions = {"insightface": "1.0.1", "onnx": "1.12.0", "onnxruntime": "1.23.2"}
+        for providers, accepted in ((["CPUExecutionProvider"], True), (["CUDAExecutionProvider"], False)):
+            with self.subTest(providers=providers):
+                runtime.get_available_providers = lambda: providers
+                with mock.patch.dict(launcher.sys.modules, {"insightface.app": app, "insightface.utils": utils, "onnxruntime": runtime}), mock.patch("importlib.metadata.version", side_effect=versions.__getitem__):
+                    if accepted:
+                        exec(launcher.FACEID_PROBE, {})
+                    else:
+                        with self.assertRaises(AssertionError):
+                            exec(launcher.FACEID_PROBE, {})
 
     def test_install_only_does_not_require_weights_or_start_public_server(self):
         with mock.patch.object(launcher, "ROOT", self.root), mock.patch.object(launcher, "validate_environment"), mock.patch.object(launcher, "launch_lock"), mock.patch.object(launcher, "ensure_port_available"), mock.patch.object(launcher, "verify_vendor_manifest"), mock.patch.object(launcher, "install_extensions", return_value=[]), mock.patch.object(launcher, "run"), mock.patch.object(launcher, "install_environments", return_value=(self.root / "venv/bin/python", {})), mock.patch.object(launcher, "write_auth") as auth, mock.patch.object(launcher, "run_forge") as forge:

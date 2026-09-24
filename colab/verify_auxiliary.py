@@ -52,7 +52,7 @@ LIMITATIONS = [
     {"id": "legacy-qwen-image", "status": "unsupported", "generation_attempted": False,
      "reason": "Two legacy Qwen weights are archival files; this fork's current Qwen backend is Image 2.1, not those legacy checkpoints."},
     {"id": "vae-preview-networks", "status": "not_covered", "generation_attempted": False,
-     "reason": "VAE preview approximators have no direct inference API. Final image generation does not prove preview model execution; a separate backend trace is required."},
+     "reason": "VAE preview approximators have no direct inference API. Run colab/verify_backend.py separately to exercise both actual weight files with completed forward traces; this API report alone does not prove preview execution."},
     {"id": "private-loras", "status": "excluded_by_request", "generation_attempted": False,
      "reason": "The three locally trained LoRAs are not publicly downloadable and are excluded under the no-upload instruction."},
 ]
@@ -311,7 +311,7 @@ def main(argv=None):
                         require_neural_upscale(input_data, data)
                     else:
                         require_changed(qa.image_proof(input_data)["pixel_sha256"], case["pixel_sha256"])
-                        raise Inconclusive("CodeFormer returned changed pixels, but the backend can catch restoration exceptions and paste an unrestored face. A clean backend inference log is required to confirm restoration.")
+                        raise Inconclusive("CodeFormer returned changed pixels, but the backend can swallow restoration errors. Run colab/verify_backend.py for successful forward hooks on CodeFormer, the detector and parser, plus captured error reports.")
                 else:
                     model = "deepdanbooru" if name.endswith("deepdanbooru") else "clip"
                     paths = ["models/torch_deepdanbooru/model-resnet_custom_v3.pt"] if model == "deepdanbooru" else ["models/BLIP/model_base_caption_capfilt_large.pth", "models/CLIP/ViT-L-14.pt"]

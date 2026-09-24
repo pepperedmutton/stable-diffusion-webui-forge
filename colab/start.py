@@ -38,6 +38,7 @@ PIP_VERSION = "26.2.1"
 TORCH = "2.7.0"
 TORCHVISION = "0.22.0"
 CUDA_INDEX = "https://download.pytorch.org/whl/cu126"
+FACEID_REQUIREMENTS = ("insightface==1.0.1", "onnx==1.12.0", "onnxruntime==1.23.2")
 GUESS_REVISION = "84826248b49bb7ca754c73293299c4d4e23a548d"
 _SHARE_HOST = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.gradio\.live\Z")
 _ANSI = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]")
@@ -288,6 +289,17 @@ print(json.dumps({'gpu': torch.cuda.get_device_name(0), 'vram_GiB': torch.cuda.g
 """
 MAIN_PROBE = "import torch,gradio,transformers,diffusers,cv2; print('Main imports passed:',torch.__version__,gradio.__version__,transformers.__version__,diffusers.__version__)"
 QWEN_PROBE = "import torch; from diffusers import QwenImage21Pipeline; import bitsandbytes; assert torch.cuda.is_available(); assert torch.cuda.is_bf16_supported(including_emulation=False); print('Qwen imports passed; bitsandbytes:',bitsandbytes.__version__)"
+FACEID_PROBE = """from importlib.metadata import version
+from insightface.app import FaceAnalysis
+from insightface.utils import face_align
+import onnxruntime
+assert version('insightface') == '1.0.1'
+assert version('onnx') == '1.12.0'
+assert version('onnxruntime') == '1.23.2'
+assert callable(FaceAnalysis) and callable(face_align.norm_crop)
+assert 'CPUExecutionProvider' in onnxruntime.get_available_providers()
+print('FaceID library imports passed with CPUExecutionProvider; model files and generation still require verification')
+"""
 OPTIONAL_PROBE = """import importlib, json
 modules = {'dynamicprompts': 'Dynamic Prompts', 'insightface': 'IP-Adapter FaceID',
            'onnxruntime': 'ONNX preprocessors', 'mediapipe': 'MediaPipe preprocessors',
@@ -312,7 +324,7 @@ def install_uv(root: Path):
     for candidate in (target / "bin/uv", target / "uv/uv"):
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return candidate
-    run([sys.executable, "-m", "pip", "install", "-q", "--no-deps", "--upgrade", "--target", target, "uv==" + UV_VERSION])
+    run([sys.executable, "-m", "pip", "install", "--no-compile", "-q", "--no-deps", "--upgrade", "--target", target, "uv==" + UV_VERSION])
     for candidate in (target / "bin/uv", target / "uv/uv"):
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return candidate
@@ -385,7 +397,7 @@ def report_optional_components(python: Path, env):
     if missing:
         print("OPTIONAL FEATURES UNAVAILABLE:", ", ".join(missing), flush=True)
         print("Main generation can still start. Missing feature libraries are listed in .colab/optional-components.json. "
-              "Use --repair-environment to retry failed installers. Linux IP-Adapter FaceID additionally requires a compatible insightface installation.", flush=True)
+              "Use --repair-environment to retry failed installers.", flush=True)
     else:
         print("Optional component imports passed; model weights and actual preprocessing are not verified by this check.", flush=True)
     return missing
@@ -402,11 +414,14 @@ def install_environments(root: Path, drive: Path, extension_names, repair=False)
     env = os.environ.copy()
     # Do not inherit notebook launch arguments or a different Python environment.
     for name in ("COMMANDLINE_ARGS", "PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "TORCH_COMMAND", "REQS_FILE",
-                 "HUGGINGFACE_GUESS_REPO", "HUGGINGFACE_GUESS_HASH"):
+                 "HUGGINGFACE_GUESS_REPO", "HUGGINGFACE_GUESS_HASH", "CIVITAI_API_KEY"):
         env.pop(name, None)
     env.update({"PIP_CONSTRAINT": str(constraints), "GRADIO_ANALYTICS_ENABLED": "False",
                 "GRADIO_TEMP_DIR": str(root / "tmp/gradio"), "PYTHONUNBUFFERED": "1",
-                "UV_LINK_MODE": "copy", "PIP_NO_CACHE_DIR": "1",
+                "UV_LINK_MODE": "copy", "UV_COMPILE_BYTECODE": "false", "PIP_NO_CACHE_DIR": "1",
+                # pip maps both environment options directly to `compile`;
+                # PIP_NO_COMPILE=1 would therefore enable compilation.
+                "PIP_COMPILE": "0", "PIP_NO_COMPILE": "0",
                 "PIP_DISABLE_PIP_VERSION_CHECK": "1", "PYTHONDONTWRITEBYTECODE": "1"})
     qenv = dict(env)
     qenv.pop("PIP_CONSTRAINT", None)
@@ -429,13 +444,16 @@ def install_environments(root: Path, drive: Path, extension_names, repair=False)
         run([python, "-m", "ensurepip", "--upgrade"], env=env)
         # The bundled pip predates normalized metadata names in current CUDA
         # wheels (for example typing_extensions). Upgrade before resolving them.
-        run([python, "-m", "pip", "install", "--upgrade", "--only-binary=:all:",
+        run([python, "-m", "pip", "install", "--no-compile", "--upgrade", "--only-binary=:all:",
              "pip==" + PIP_VERSION, "--index-url", "https://pypi.org/simple"], env=env)
         # uv seeds newer setuptools; satisfy Forge's pin from PyPI before Triton
         # resolves its setuptools dependency against the CUDA-only wheel index.
-        run([python, "-m", "pip", "install", "setuptools==69.5.1", "--index-url", "https://pypi.org/simple"], env=env)
-        run([python, "-m", "pip", "install", f"torch=={TORCH}", f"torchvision=={TORCHVISION}", "--index-url", CUDA_INDEX], env=env)
-        run([python, "-m", "pip", "install", "-r", root / "requirements_versions.txt", "sentencepiece==0.2.1", "opencv-python==4.11.0.86"], env=env)
+        run([python, "-m", "pip", "install", "--no-compile", "setuptools==69.5.1", "--index-url", "https://pypi.org/simple"], env=env)
+        run([python, "-m", "pip", "install", "--no-compile", f"torch=={TORCH}", f"torchvision=={TORCHVISION}", "--index-url", CUDA_INDEX], env=env)
+        run([python, "-m", "pip", "install", "--no-compile", "-r", root / "requirements_versions.txt", "sentencepiece==0.2.1", "opencv-python==4.11.0.86"], env=env)
+        # The official 1.0.1 wheel preserves Forge's FaceAnalysis API without
+        # compiling face3d. ONNX 1.12 keeps Forge's protobuf 3.20.0 pin valid.
+        run([python, "-m", "pip", "install", "--no-compile", "--only-binary=:all:", *FACEID_REQUIREMENTS], env=env)
         run([python, "-c", GPU_PROBE], env=env)
         run([python, "launch.py", "--exit", "--no-download-sd-model", "--models-dir", drive / "models",
              "--embeddings-dir", drive / "embeddings", "--clip-models-path", drive / "models/CLIP",
@@ -443,6 +461,7 @@ def install_environments(root: Path, drive: Path, extension_names, repair=False)
         install_dependency_overlay(root)
         run([python, "scripts/setup_qwen21_runtime.py", "--uv", uv], cwd=root, env=qenv)
         run([python, "-c", MAIN_PROBE], env=env)
+        run([python, "-c", FACEID_PROBE], env=env)
         run([qpython, "-c", QWEN_PROBE], cwd=root, env=qenv)
     else:
         print("Reusing Python and both dependency environments directly from Drive; no environment copy or package reinstall.", flush=True)
@@ -454,6 +473,7 @@ def install_environments(root: Path, drive: Path, extension_names, repair=False)
             run(["apt-get", "install", "-y", "-qq", "libgl1", "libglib2.0-0", "libcairo2"])
         run([python, "-c", GPU_PROBE], env=env)
         run([python, "-c", MAIN_PROBE], env=env)
+        run([python, "-c", FACEID_PROBE], env=env)
         run([qpython, "-c", QWEN_PROBE], cwd=root, env=qenv)
         install_dependency_overlay(root)
     for interpreter in (python, qpython):
