@@ -6,6 +6,7 @@ from pathlib import Path
 import tempfile
 from types import SimpleNamespace
 import unittest
+import zipfile
 from unittest import mock
 
 SPEC = importlib.util.spec_from_file_location("downloads", Path(__file__).resolve().parents[1] / "colab" / "download_models.py")
@@ -151,15 +152,64 @@ class DownloadTests(unittest.TestCase):
     def test_dry_plan_does_not_read_key_or_write_files(self):
         with mock.patch.object(downloads, 'validate_storage', side_effect=AssertionError('No writes')):
             self.assertEqual(downloads.main([]), 0)
+    def archive_fixture(self, member_name='safe/model.onnx', data=None, symlink=False, duplicate=False):
+        archive = self.state / 'archives/test.zip'
+        archive.parent.mkdir(parents=True, exist_ok=True)
+        content = self.content if data is None else data
+        with zipfile.ZipFile(archive, 'w') as output:
+            info = zipfile.ZipInfo(member_name)
+            if symlink:
+                info.external_attr = 0o120777 << 16
+            output.writestr(info, content)
+            if duplicate:
+                output.writestr('other/model.onnx', content)
+        return {'path': 'archives/test.zip', 'storage': 'download-state', 'bytes': archive.stat().st_size,
+                'sha256': hashlib.sha256(archive.read_bytes()).hexdigest(),
+                'members': [{'storage': 'models', 'path': 'insightface/models/buffalo_l/model.onnx',
+                             'bytes': len(self.content), 'sha256': hashlib.sha256(self.content).hexdigest()}]}
+    def test_archive_publishes_only_verified_named_members(self):
+        item = self.archive_fixture()
+        actual = downloads.extract_verified_archive(item, self.root)
+        self.assertEqual(actual, ['models/insightface/models/buffalo_l/model.onnx'])
+        self.assertEqual((self.models / item['members'][0]['path']).read_bytes(), self.content)
+    def test_archive_rejects_traversal_and_symlink(self):
+        for args in ({'member_name': '../model.onnx'}, {'symlink': True}, {'duplicate': True}):
+            with self.subTest(args=args), self.assertRaises((ValueError, downloads.IntegrityError)):
+                downloads.extract_verified_archive(self.archive_fixture(**args), self.root)
+        self.assertFalse((self.models / 'insightface/models/buffalo_l/model.onnx').exists())
+    def test_archive_rejects_member_hash_and_keeps_existing_files(self):
+        item = self.archive_fixture(data=b'x' * len(self.content))
+        with self.assertRaises(downloads.IntegrityError):
+            downloads.extract_verified_archive(item, self.root)
+        target = self.models / item['members'][0]['path']
+        self.assertFalse(target.exists())
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b'user-data')
+        with self.assertRaises(downloads.IntegrityError):
+            downloads.extract_verified_archive(self.archive_fixture(), self.root)
+        self.assertEqual(target.read_bytes(), b'user-data')
+    def test_archive_checksum_is_rechecked_before_extraction(self):
+        item = self.archive_fixture()
+        item['sha256'] = 'f' * 64
+        with self.assertRaises(downloads.IntegrityError):
+            downloads.extract_verified_archive(item, self.root)
+    def test_api_key_is_not_sent_to_any_official_fallback(self):
+        for provider in ('official-github', 'official-google-storage', 'official-openai', 'official-kakaobrain'):
+            remote = next(item for item in downloads.CATALOG['files'] if item['provider'] == provider)
+            session = Session(Response(200, self.content))
+            with downloads.civitai_response(session, remote['url'], {}, 'test-key'):
+                pass
+            self.assertNotIn('Authorization', session.calls[0][1]['headers'])
     def test_catalog_is_complete_and_credential_free(self):
         public = downloads.CATALOG["files"]
-        self.assertEqual(len(public), 52)
-        self.assertEqual(sum(item["bytes"] for item in public), 140109960303)
+        self.assertEqual(len(public), 66)
+        self.assertEqual(sum(item["bytes"] for item in public + downloads.CATALOG['archives']), 145813203101)
         self.assertEqual(sum(item['group'] == 'checkpoint' for item in public), 8)
         self.assertEqual(downloads.CATALOG['default_checkpoint'], 'waiIllustriousSDXL_v150.safetensors')
         self.assertNotIn('Novsw', repr(downloads.CATALOG))
         self.assertNotIn('D:', repr(downloads.CATALOG))
-        for item in public:
+        self.assertEqual(len(downloads.CATALOG['archives'][0]['members']), 5)
+        for item in public + downloads.CATALOG['archives']:
             downloads.validate_item(item)
             self.assertNotIn("token=", item.get("url", ""))
 

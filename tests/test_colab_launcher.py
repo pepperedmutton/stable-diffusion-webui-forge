@@ -427,6 +427,7 @@ class AuthenticationAndShareTests(TemporaryTree):
         self.assertIn("--skip-prepare-environment", args)
         self.assertIn("--no-download-sd-model", args)
         self.assertNotIn("--enable-insecure-extension-access", args)
+        self.assertEqual(args[args.index("--clip-models-path") + 1], self.drive / "models/CLIP")
 
     def test_failed_spawn_removes_password_file(self):
         auth = self.base / "auth"
@@ -591,7 +592,7 @@ class RuntimeAndVendorTests(DriveLayoutTree):
                 launcher.validate_environment(Path("/content/drive/MyDrive/ForgeColab/forge"), Path("/content/drive/MyDrive/ForgeColab"))
         run.assert_not_called()
 
-    def test_setuptools_constraint_is_satisfied_before_cuda_only_torch_install(self):
+    def test_modern_pip_and_setuptools_are_ready_before_cuda_only_torch_install(self):
         (self.root / ".colab").mkdir()
         (self.root / "requirements_versions.txt").write_text("setuptools==69.5.1\n")
         python = self.root / "venv/bin/python"
@@ -603,19 +604,26 @@ class RuntimeAndVendorTests(DriveLayoutTree):
                     python.write_bytes(b"managed interpreter fixture")
                 commands = []
                 setuptools_version = "84.0.0"
+                pip_version = "bundled-old-pip"
 
                 def simulated_run(command, **kwargs):
-                    nonlocal setuptools_version
+                    nonlocal setuptools_version, pip_version
                     command = list(map(str, command))
                     commands.append(command)
                     if command[1:4] == ["-m", "pip", "install"]:
                         self.assertEqual(command[0], str(python))
                         constraints = Path(kwargs["env"]["PIP_CONSTRAINT"])
                         self.assertIn("setuptools==69.5.1", constraints.read_text())
+                        if "pip==26.2.1" in command:
+                            self.assertEqual(command[command.index("--index-url") + 1], "https://pypi.org/simple")
+                            self.assertIn("--only-binary=:all:", command)
+                            pip_version = "26.2.1"
                         if "setuptools==69.5.1" in command:
+                            self.assertEqual(pip_version, "26.2.1")
                             self.assertEqual(command[command.index("--index-url") + 1], "https://pypi.org/simple")
                             setuptools_version = "69.5.1"
                         if f"torch=={launcher.TORCH}" in command:
+                            self.assertEqual(pip_version, "26.2.1", "Bundled pip mishandles current normalized wheel metadata names")
                             self.assertEqual(command[command.index("--index-url") + 1], launcher.CUDA_INDEX)
                             self.assertEqual(setuptools_version, "69.5.1", "Triton cannot obtain Forge's setuptools pin from the CUDA-only index")
                     return SimpleNamespace(returncode=0, stdout="")
@@ -624,8 +632,11 @@ class RuntimeAndVendorTests(DriveLayoutTree):
                     result, _ = launcher.install_environments(self.root, self.drive, [], repair=existing_environment)
                 self.assertEqual(result, python)
                 pip_installs = [command for command in commands if command[1:4] == ["-m", "pip", "install"]]
-                self.assertIn("setuptools==69.5.1", pip_installs[0])
-                self.assertIn(f"torch=={launcher.TORCH}", pip_installs[1])
+                self.assertIn("pip==26.2.1", pip_installs[0])
+                self.assertIn("setuptools==69.5.1", pip_installs[1])
+                self.assertIn(f"torch=={launcher.TORCH}", pip_installs[2])
+                prepare_command = next(command for command in commands if "launch.py" in command)
+                self.assertEqual(prepare_command[prepare_command.index("--clip-models-path") + 1], str(self.drive / "models/CLIP"))
                 self.assertEqual(json.loads((self.root / ".colab/installed.json").read_text())["signature"], "fixture")
 
     def test_persistent_python_survives_bootstrap_removal_and_uses_no_hardlinks(self):

@@ -34,6 +34,7 @@ ROOT = Path(__file__).resolve().parents[1]
 KIT = Path(__file__).resolve().parent / "kit"
 REMOTE = "https://github.com/pepperedmutton/stable-diffusion-webui-forge"
 UV_VERSION = "0.8.22"
+PIP_VERSION = "26.2.1"
 TORCH = "2.7.0"
 TORCHVISION = "0.22.0"
 CUDA_INDEX = "https://download.pytorch.org/whl/cu126"
@@ -426,6 +427,10 @@ def install_environments(root: Path, drive: Path, extension_names, repair=False)
         if version != "3.10":
             raise ValueError("The managed environment is not Python 3.10; use a fresh Colab checkout")
         run([python, "-m", "ensurepip", "--upgrade"], env=env)
+        # The bundled pip predates normalized metadata names in current CUDA
+        # wheels (for example typing_extensions). Upgrade before resolving them.
+        run([python, "-m", "pip", "install", "--upgrade", "--only-binary=:all:",
+             "pip==" + PIP_VERSION, "--index-url", "https://pypi.org/simple"], env=env)
         # uv seeds newer setuptools; satisfy Forge's pin from PyPI before Triton
         # resolves its setuptools dependency against the CUDA-only wheel index.
         run([python, "-m", "pip", "install", "setuptools==69.5.1", "--index-url", "https://pypi.org/simple"], env=env)
@@ -433,7 +438,8 @@ def install_environments(root: Path, drive: Path, extension_names, repair=False)
         run([python, "-m", "pip", "install", "-r", root / "requirements_versions.txt", "sentencepiece==0.2.1", "opencv-python==4.11.0.86"], env=env)
         run([python, "-c", GPU_PROBE], env=env)
         run([python, "launch.py", "--exit", "--no-download-sd-model", "--models-dir", drive / "models",
-             "--embeddings-dir", drive / "embeddings", "--ui-settings-file", drive / "state/config.json"], cwd=root, env=env)
+             "--embeddings-dir", drive / "embeddings", "--clip-models-path", drive / "models/CLIP",
+             "--ui-settings-file", drive / "state/config.json"], cwd=root, env=env)
         install_dependency_overlay(root)
         run([python, "scripts/setup_qwen21_runtime.py", "--uv", uv], cwd=root, env=qenv)
         run([python, "-c", MAIN_PROBE], env=env)
@@ -590,6 +596,7 @@ def forge_arguments(python: Path, drive: Path, auth: Path):
     return [python, "launch.py", "--skip-prepare-environment", "--share", "--listen",
             "--port", "7860", "--no-download-sd-model", "--gradio-auth-path", auth,
             "--models-dir", drive / "models", "--embeddings-dir", drive / "embeddings",
+            "--clip-models-path", drive / "models/CLIP",
             "--ui-settings-file", drive / "state/config.json",
             "--ui-config-file", drive / "state/ui-config.json",
             "--gradio-allowed-path", drive / "outputs"]

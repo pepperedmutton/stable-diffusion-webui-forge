@@ -35,7 +35,33 @@ if origin.rstrip("/").removesuffix(".git") != url.removesuffix(".git"):
 %run /content/drive/MyDrive/ForgeColab/forge/colab/start.py --drive-root /content/drive/MyDrive/ForgeColab --install-only
 ```
 
-首次安装不要求模型已齐全，也不会开启公开链接。模型准备完成后，运行下面一行启动：
+首次安装不要求模型已齐全，也不会开启公开链接。
+
+先在另一个 Colab 单元中下载模型。使用隐藏输入填写 Civitai API Key；它只通过内存传给下载器，不写进下载链接或笔记本源码：
+
+```python
+import getpass
+import os
+
+os.environ["CIVITAI_API_KEY"] = getpass.getpass("Civitai API key: ").strip()
+try:
+    %run /content/drive/MyDrive/ForgeColab/forge/colab/download_models.py --drive-root /content/drive/MyDrive/ForgeColab --download
+finally:
+    os.environ.pop("CIVITAI_API_KEY", None)
+```
+
+去掉 `--download` 可先查看清单和空间需求。下载器优先使用精确匹配的 Civitai 文件；该站缺少的公开模型（包括 Qwen Image 2.1）使用固定版本的官方来源。WAI Illustrious SDXL v150 替代本机 Novsw 合并模型，跳过三个私有 LoRA（`csky_sora_nova_il_r32_a16`、`galkan`、`shadow_beast`）。权重和文本嵌入直接保存到 Drive。中断后重跑相同命令即可续传；已完成文件会核验校验值。下载记录位于 `ForgeColab/download-state/download-report.json`，下载成功不代表已完成出图验收。
+
+BF16 权重与 Qwen 独立环境准备好后，在合适的 GPU 上运行两条量化命令。输入和输出都在 Drive，保留原 BF16 文件：
+
+```python
+!/content/drive/MyDrive/ForgeColab/forge/runtimes/qwen-image-2.1/bin/python /content/drive/MyDrive/ForgeColab/forge/scripts/quantize_qwen21.py --precision nf4 --source /content/drive/MyDrive/ForgeColab/models/diffusers/Qwen-Image-2.1 --output /content/drive/MyDrive/ForgeColab/models/diffusers/Qwen-Image-2.1-NF4
+!/content/drive/MyDrive/ForgeColab/forge/runtimes/qwen-image-2.1/bin/python /content/drive/MyDrive/ForgeColab/forge/scripts/quantize_qwen21.py --precision int8 --source /content/drive/MyDrive/ForgeColab/models/diffusers/Qwen-Image-2.1 --output /content/drive/MyDrive/ForgeColab/models/diffusers/Qwen-Image-2.1-INT8
+```
+
+每个输出目录的 `quantization-manifest.json` 记录校验值和重新加载检查。再次执行会复用已验证的完整结果；遇到不完整或不匹配的旧输出会停止，不直接覆盖。旧版分体 Qwen 文件另存于 `models/legacy-qwen-image`，不作为 Qwen Image 2.1 档位。
+
+完成后启动 Forge：
 
 ```python
 %run /content/drive/MyDrive/ForgeColab/forge/colab/start.py --drive-root /content/drive/MyDrive/ForgeColab

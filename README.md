@@ -58,6 +58,30 @@ if origin.rstrip("/").removesuffix(".git") != url.removesuffix(".git"):
 
 This first step installs the persistent environments without requiring weights or opening a public server. The installer restores the bundled extension sources and applies the phone interface. On the first installation, a temporary Python bootstrap may be downloaded, then its complete interpreter and standard library are copied once to Drive. Both dependency environments are installed on Drive with copy mode; they are never copied into `/content` at launch. The notebook interpreter, required operating-system libraries and temporary installation files belong to the Colab VM.
 
+Download the model collection in another Colab cell. Enter your Civitai API key in the hidden input; it is passed in memory, never placed in a download URL or saved in the notebook source:
+
+```python
+import getpass
+import os
+
+os.environ["CIVITAI_API_KEY"] = getpass.getpass("Civitai API key: ").strip()
+try:
+    %run /content/drive/MyDrive/ForgeColab/forge/colab/download_models.py --drive-root /content/drive/MyDrive/ForgeColab --download
+finally:
+    os.environ.pop("CIVITAI_API_KEY", None)
+```
+
+Omit `--download` to preview the current file list and storage requirement without downloading. The collection prefers exact Civitai matches and uses pinned official sources for public models absent there, including Qwen Image 2.1. It uses WAI Illustrious SDXL v150 in place of the local Novsw merge and skips the three private LoRAs (`csky_sora_nova_il_r32_a16`, `galkan`, `shadow_beast`). Model weights and embeddings go directly to their Drive folders. Interrupted transfers resume when the same command is rerun; completed files are checksum-verified. Download results are recorded in `ForgeColab/download-state/download-report.json`. Download completion does not prove successful generation.
+
+After the BF16 Qwen bundle and the isolated Qwen environment are ready, create the NF4 and INT8 variants on a suitable GPU. Both commands read BF16 from Drive and write their separate, reusable directories back to Drive:
+
+```python
+!/content/drive/MyDrive/ForgeColab/forge/runtimes/qwen-image-2.1/bin/python /content/drive/MyDrive/ForgeColab/forge/scripts/quantize_qwen21.py --precision nf4 --source /content/drive/MyDrive/ForgeColab/models/diffusers/Qwen-Image-2.1 --output /content/drive/MyDrive/ForgeColab/models/diffusers/Qwen-Image-2.1-NF4
+!/content/drive/MyDrive/ForgeColab/forge/runtimes/qwen-image-2.1/bin/python /content/drive/MyDrive/ForgeColab/forge/scripts/quantize_qwen21.py --precision int8 --source /content/drive/MyDrive/ForgeColab/models/diffusers/Qwen-Image-2.1 --output /content/drive/MyDrive/ForgeColab/models/diffusers/Qwen-Image-2.1-INT8
+```
+
+These conversions preserve the BF16 source and record checksums and reload checks in each output's `quantization-manifest.json`. An already verified conversion is reused. An incomplete or mismatched output is reported for review instead of being overwritten. Legacy split Qwen Image files are retained in `models/legacy-qwen-image`; they are not Qwen Image 2.1 profiles.
+
 Once the model files are in the directories above, start Forge with:
 
 ```python
