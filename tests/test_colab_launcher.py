@@ -593,6 +593,58 @@ class RuntimeAndVendorTests(DriveLayoutTree):
                 launcher.validate_environment(Path("/content/drive/MyDrive/ForgeColab/forge"), Path("/content/drive/MyDrive/ForgeColab"))
         run.assert_not_called()
 
+    def test_working_clip_is_tokenized_without_reinstalling(self):
+        python, env = self.root / "venv/bin/python", {"PIP_CONSTRAINT": "fixture"}
+        with mock.patch.object(launcher, "run") as run:
+            launcher.install_main_clip(python, env)
+        run.assert_called_once_with([python, "-c", launcher.CLIP_PROBE], env=env)
+
+    def test_missing_or_broken_clip_is_repaired_then_tokenized(self):
+        python, env = self.root / "venv/bin/python", {"PIP_CONSTRAINT": "fixture"}
+        initial_failure = subprocess.CalledProcessError(1, [str(python), "-c", launcher.CLIP_PROBE])
+        with mock.patch.object(launcher, "run", side_effect=[initial_failure, None, None, None]) as run:
+            launcher.install_main_clip(python, env)
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertEqual(len(commands), 4)
+        self.assertEqual(commands[0], [python, "-c", launcher.CLIP_PROBE])
+        self.assertIn("setuptools==69.5.1", commands[1])
+        self.assertIn("wheel==0.46.3", commands[1])
+        self.assertIn("--only-binary=:all:", commands[1])
+        self.assertEqual(commands[1][commands[1].index("--index-url") + 1], "https://pypi.org/simple")
+        self.assertEqual(commands[2][-1], "https://github.com/openai/CLIP/archive/d50d76daa670286dd6cacf3bcd80b5e4823fc8e1.zip")
+        for flag in ("--no-build-isolation", "--no-deps", "--force-reinstall", "--no-compile"):
+            self.assertIn(flag, commands[2])
+        self.assertNotIn("--no-build-isolation", commands[1])
+        self.assertEqual(commands[3], [python, "-c", launcher.CLIP_PROBE])
+        self.assertTrue(all(call.kwargs["env"] is env for call in run.call_args_list))
+
+    def test_clip_repair_or_post_repair_probe_failure_stops_setup(self):
+        python = self.root / "venv/bin/python"
+        failure = subprocess.CalledProcessError(1, [str(python), "fixture failure"])
+        for outcomes in ([failure, failure], [failure, None, failure], [failure, None, None, failure]):
+            with self.subTest(failed_step=len(outcomes)), mock.patch.object(launcher, "run", side_effect=outcomes) as run, mock.patch("sys.stdout", new=io.StringIO()) as output:
+                with self.assertRaises(subprocess.CalledProcessError):
+                    launcher.install_main_clip(python, {})
+                self.assertEqual(run.call_count, len(outcomes))
+                self.assertNotIn("tokenization passed", output.getvalue())
+
+    def test_clip_probe_exercises_the_tokenizer_and_rejects_wrong_results(self):
+        clip = ModuleType("clip")
+        clip.available_models = lambda: ["ViT-L/14"]
+        for shape, start, accepted in (((1, 77), 49406, True), ((1, 64), 49406, False), ((1, 77), 1, False)):
+            with self.subTest(shape=shape, start=start):
+                tokens = mock.MagicMock()
+                tokens.shape = shape
+                tokens.__getitem__.return_value = start
+                clip.tokenize = mock.Mock(return_value=tokens)
+                with mock.patch.dict(launcher.sys.modules, {"clip": clip}):
+                    if accepted:
+                        exec(launcher.CLIP_PROBE, {})
+                    else:
+                        with self.assertRaises(AssertionError):
+                            exec(launcher.CLIP_PROBE, {})
+                clip.tokenize.assert_called_once_with(["Forge Colab tokenizer check"])
+
     def test_modern_pip_and_setuptools_are_ready_before_cuda_only_torch_install(self):
         (self.root / ".colab").mkdir()
         (self.root / "requirements_versions.txt").write_text("setuptools==69.5.1\n")
@@ -616,6 +668,7 @@ class RuntimeAndVendorTests(DriveLayoutTree):
                         self.assertEqual(kwargs["env"]["PIP_COMPILE"], "0")
                         self.assertEqual(kwargs["env"]["PIP_NO_COMPILE"], "0")
                         self.assertEqual(kwargs["env"]["UV_COMPILE_BYTECODE"], "false")
+                        self.assertEqual(kwargs["env"]["WEBUI_LAUNCH_LIVE_OUTPUT"], "1")
                     if command[1:4] == ["-m", "pip", "install"]:
                         self.assertEqual(command[0], str(python))
                         self.assertIn("--no-compile", command)
@@ -643,6 +696,10 @@ class RuntimeAndVendorTests(DriveLayoutTree):
                 self.assertIn("setuptools==69.5.1", pip_installs[1])
                 self.assertIn(f"torch=={launcher.TORCH}", pip_installs[2])
                 prepare_command = next(command for command in commands if "launch.py" in command)
+                clip_probe = next(command for command in commands if launcher.CLIP_PROBE in command)
+                requirements = next(command for command in pip_installs if str(self.root / "requirements_versions.txt") in command)
+                self.assertLess(commands.index(requirements), commands.index(clip_probe))
+                self.assertLess(commands.index(clip_probe), commands.index(prepare_command))
                 self.assertEqual(prepare_command[prepare_command.index("--clip-models-path") + 1], str(self.drive / "models/CLIP"))
                 faceid_install = next(command for command in pip_installs if "insightface==1.0.1" in command)
                 self.assertIn("--only-binary=:all:", faceid_install)
@@ -738,6 +795,32 @@ class RuntimeAndVendorTests(DriveLayoutTree):
         self.assertIn("IP-Adapter FaceID", missing)
         self.assertIn("OPTIONAL FEATURES UNAVAILABLE", stdout.getvalue())
         self.assertIn("--repair-environment", stdout.getvalue())
+
+    def test_full_install_checks_every_extension_without_changing_saved_enablement(self):
+        (self.root / ".colab").mkdir()
+        (self.root / "requirements_versions.txt").write_text("setuptools==69.5.1\n")
+        settings = self.drive / "state/config.json"
+        settings.parent.mkdir()
+        saved = {"disabled_extensions": ["sd-dynamic-prompts"], "disable_all_extensions": "all"}
+        settings.write_text(json.dumps(saved))
+        missing = {"SVG preprocessors": "ModuleNotFoundError"}
+        with mock.patch.object(launcher, "run", return_value=SimpleNamespace(stdout="")) as run, \
+                mock.patch.object(launcher, "install_uv", return_value=Path("uv")), \
+                mock.patch.object(launcher, "persistent_python", return_value=self.root / ".colab/python/bin/python3.10"), \
+                mock.patch.object(launcher, "installation_signature", return_value="fixture"), \
+                mock.patch.object(launcher.subprocess, "check_output", return_value="3.10\n"), \
+                mock.patch.object(launcher, "install_dependency_overlay"), \
+                mock.patch.object(launcher, "report_optional_components", return_value=missing):
+            with self.assertRaisesRegex(RuntimeError, "Full installation is incomplete.*SVG"):
+                launcher.install_environments(self.root, self.drive, [], repair=True, require_all=True)
+        self.assertEqual(json.loads(settings.read_text()), saved)
+        install_settings = self.root / ".colab/install-settings.json"
+        self.assertEqual(json.loads(install_settings.read_text()),
+                         {"disabled_extensions": [], "disable_all_extensions": "none"})
+        command = next(call.args[0] for call in run.call_args_list if "launch.py" in call.args[0])
+        self.assertEqual(command[command.index("--ui-settings-file") + 1], install_settings)
+        self.assertFalse((self.root / ".colab/installed.json").exists())
+        self.assertEqual(json.loads((self.root / ".colab/optional-components.json").read_text()), missing)
 
     def test_legacy_mediapipe_api_is_actually_probed(self):
         self.assertIn("imported.solutions.face_mesh", launcher.OPTIONAL_PROBE)

@@ -38,6 +38,7 @@ PIP_VERSION = "26.2.1"
 TORCH = "2.7.0"
 TORCHVISION = "0.22.0"
 CUDA_INDEX = "https://download.pytorch.org/whl/cu126"
+CLIP_PACKAGE = "https://github.com/openai/CLIP/archive/d50d76daa670286dd6cacf3bcd80b5e4823fc8e1.zip"
 FACEID_REQUIREMENTS = ("insightface==1.0.1", "onnx==1.12.0", "onnxruntime==1.23.2")
 GUESS_REVISION = "84826248b49bb7ca754c73293299c4d4e23a548d"
 _SHARE_HOST = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.gradio\.live\Z")
@@ -287,7 +288,14 @@ assert torch.__version__.split('+')[0] == '2.7.0', 'Unexpected PyTorch version'
 assert torch.cuda.is_bf16_supported(including_emulation=False), 'Native BF16 is required for Qwen; T4 is unsupported'
 print(json.dumps({'gpu': torch.cuda.get_device_name(0), 'vram_GiB': torch.cuda.get_device_properties(0).total_memory/2**30, 'torch': torch.__version__, 'native_bf16': True}))
 """
-MAIN_PROBE = "import torch,gradio,transformers,diffusers,cv2; print('Main imports passed:',torch.__version__,gradio.__version__,transformers.__version__,diffusers.__version__)"
+MAIN_PROBE = "import torch,gradio,transformers,diffusers,cv2,fastapi; from fastapi import Request; print('Main imports passed:',torch.__version__,gradio.__version__,transformers.__version__,diffusers.__version__,'FastAPI',fastapi.__version__)"
+CLIP_PROBE = """import clip
+assert callable(clip.tokenize), 'The OpenAI CLIP tokenizer is unavailable'
+tokens = clip.tokenize(['Forge Colab tokenizer check'])
+assert tuple(tokens.shape) == (1, 77), 'Unexpected OpenAI CLIP token shape'
+assert int(tokens[0, 0]) == 49406, 'Unexpected OpenAI CLIP start token'
+assert clip.available_models(), 'OpenAI CLIP model definitions are unavailable'
+"""
 QWEN_PROBE = "import torch; from diffusers import QwenImage21Pipeline; import bitsandbytes; assert torch.cuda.is_available(); assert torch.cuda.is_bf16_supported(including_emulation=False); print('Qwen imports passed; bitsandbytes:',bitsandbytes.__version__)"
 FACEID_PROBE = """from importlib.metadata import version
 from insightface.app import FaceAnalysis
@@ -304,7 +312,8 @@ OPTIONAL_PROBE = """import importlib, json
 modules = {'dynamicprompts': 'Dynamic Prompts', 'insightface': 'IP-Adapter FaceID',
            'onnxruntime': 'ONNX preprocessors', 'mediapipe': 'MediaPipe preprocessors',
            'handrefinerportable': 'HandRefiner', 'depth_anything': 'Depth Anything',
-           'depth_anything_v2': 'Depth Anything V2'}
+           'depth_anything_v2': 'Depth Anything V2', 'fvcore': 'Preprocessor utilities',
+           'svglib.svglib': 'SVG preprocessors'}
 missing = {}
 for module, feature in modules.items():
     try:
@@ -324,11 +333,27 @@ def install_uv(root: Path):
     for candidate in (target / "bin/uv", target / "uv/uv"):
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return candidate
-    run([sys.executable, "-m", "pip", "install", "--no-compile", "-q", "--no-deps", "--upgrade", "--target", target, "uv==" + UV_VERSION])
+    run([sys.executable, "-m", "pip", "install", "--no-compile", "--no-deps", "--upgrade", "--target", target, "uv==" + UV_VERSION])
     for candidate in (target / "bin/uv", target / "uv/uv"):
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return candidate
     raise ValueError("The private uv installation is missing its Linux executable")
+
+
+def install_main_clip(python: Path, env):
+    """Repair the pinned legacy CLIP build only when real tokenization fails."""
+    try:
+        run([python, "-c", CLIP_PROBE], env=env)
+    except subprocess.CalledProcessError:
+        print("Preparing OpenAI CLIP with its compatible build tools.", flush=True)
+        run([python, "-m", "pip", "install", "--no-compile", "--only-binary=:all:",
+             "setuptools==69.5.1", "wheel==0.46.3", "--index-url", "https://pypi.org/simple"], env=env)
+        # This old CLIP setup imports pkg_resources. Keep the exception local:
+        # pip 26's isolated builds no longer inherit the main constraints file.
+        run([python, "-m", "pip", "install", "--no-compile", "--no-build-isolation",
+             "--no-deps", "--force-reinstall", CLIP_PACKAGE], env=env)
+        run([python, "-c", CLIP_PROBE], env=env)
+    print("OpenAI CLIP tokenization passed.", flush=True)
 
 
 def persistent_python(root: Path, uv: Path, env):
@@ -403,7 +428,7 @@ def report_optional_components(python: Path, env):
     return missing
 
 
-def install_environments(root: Path, drive: Path, extension_names, repair=False):
+def install_environments(root: Path, drive: Path, extension_names, repair=False, require_all=False):
     prepare = helper("colab_prepare")
     python = root / "venv/bin/python"
     qpython = root / "runtimes/qwen-image-2.1/bin/python"
@@ -418,6 +443,7 @@ def install_environments(root: Path, drive: Path, extension_names, repair=False)
         env.pop(name, None)
     env.update({"PIP_CONSTRAINT": str(constraints), "GRADIO_ANALYTICS_ENABLED": "False",
                 "GRADIO_TEMP_DIR": str(root / "tmp/gradio"), "PYTHONUNBUFFERED": "1",
+                "WEBUI_LAUNCH_LIVE_OUTPUT": "1",
                 "UV_LINK_MODE": "copy", "UV_COMPILE_BYTECODE": "false", "PIP_NO_CACHE_DIR": "1",
                 # pip maps both environment options directly to `compile`;
                 # PIP_NO_COMPILE=1 would therefore enable compilation.
@@ -432,8 +458,8 @@ def install_environments(root: Path, drive: Path, extension_names, repair=False)
         install_dependency_overlay(root)
     if repair or current.get("signature") != signature or not python.is_file() or not qpython.is_file():
         print("Installing persistent Python 3.10 and CUDA libraries on Drive. Initial setup can take several minutes.", flush=True)
-        run(["apt-get", "update", "-qq"])
-        run(["apt-get", "install", "-y", "-qq", "git", "build-essential", "libgl1", "libglib2.0-0", "libcairo2-dev", "pkg-config"])
+        run(["apt-get", "update"])
+        run(["apt-get", "install", "-y", "git", "build-essential", "libgl1", "libglib2.0-0", "libcairo2-dev", "pkg-config"])
         uv = install_uv(root)
         base_python = persistent_python(root, uv, env)
         create_persistent_venv(base_python, root / "venv", env)
@@ -451,13 +477,20 @@ def install_environments(root: Path, drive: Path, extension_names, repair=False)
         run([python, "-m", "pip", "install", "--no-compile", "setuptools==69.5.1", "--index-url", "https://pypi.org/simple"], env=env)
         run([python, "-m", "pip", "install", "--no-compile", f"torch=={TORCH}", f"torchvision=={TORCHVISION}", "--index-url", CUDA_INDEX], env=env)
         run([python, "-m", "pip", "install", "--no-compile", "-r", root / "requirements_versions.txt", "sentencepiece==0.2.1", "opencv-python==4.11.0.86"], env=env)
+        install_main_clip(python, env)
         # The official 1.0.1 wheel preserves Forge's FaceAnalysis API without
         # compiling face3d. ONNX 1.12 keeps Forge's protobuf 3.20.0 pin valid.
         run([python, "-m", "pip", "install", "--no-compile", "--only-binary=:all:", *FACEID_REQUIREMENTS], env=env)
         run([python, "-c", GPU_PROBE], env=env)
+        install_settings = drive / "state/config.json"
+        if require_all:
+            settings = prepare.read_json(install_settings) if install_settings.is_file() else {}
+            settings.update(disabled_extensions=[], disable_all_extensions="none")
+            install_settings = prepare.safe_target(root, ".colab/install-settings.json")
+            prepare.atomic_json(install_settings, settings)
         run([python, "launch.py", "--exit", "--no-download-sd-model", "--models-dir", drive / "models",
              "--embeddings-dir", drive / "embeddings", "--clip-models-path", drive / "models/CLIP",
-             "--ui-settings-file", drive / "state/config.json"], cwd=root, env=env)
+             "--ui-settings-file", install_settings], cwd=root, env=env)
         install_dependency_overlay(root)
         run([python, "scripts/setup_qwen21_runtime.py", "--uv", uv], cwd=root, env=qenv)
         run([python, "-c", MAIN_PROBE], env=env)
@@ -469,8 +502,8 @@ def install_environments(root: Path, drive: Path, extension_names, repair=False)
         # Most Colab images include them; install only missing runtime libraries.
         missing_native = subprocess.run(["ldconfig", "-p"], capture_output=True, text=True, check=True).stdout
         if any(name not in missing_native for name in ("libGL.so.1", "libglib-2.0.so.0", "libcairo.so.2")):
-            run(["apt-get", "update", "-qq"])
-            run(["apt-get", "install", "-y", "-qq", "libgl1", "libglib2.0-0", "libcairo2"])
+            run(["apt-get", "update"])
+            run(["apt-get", "install", "-y", "libgl1", "libglib2.0-0", "libcairo2"])
         run([python, "-c", GPU_PROBE], env=env)
         run([python, "-c", MAIN_PROBE], env=env)
         run([python, "-c", FACEID_PROBE], env=env)
@@ -486,6 +519,10 @@ def install_environments(root: Path, drive: Path, extension_names, repair=False)
     print("Environment imports passed. This is not a guarantee that every optional extension or model can run on the allocated GPU.", flush=True)
     missing = report_optional_components(python, env)
     prepare.atomic_json(prepare.safe_target(root, ".colab/optional-components.json"), missing)
+    if require_all and missing:
+        raise RuntimeError("Full installation is incomplete: " + ", ".join(missing) +
+                           ". See the installer output above and .colab/optional-components.json; "
+                           "rerun with --install-only --repair-environment after correcting the reported errors.")
     prepare.atomic_json(marker, {"signature": signature})
     return python, env
 
@@ -697,7 +734,7 @@ def main(argv=None):
         print("Persistent settings:", result["settings_directory"], flush=True)
         extensions = install_extensions(root)
         run([sys.executable, KIT / "mobile_patch.py", "--root", root], cwd=root)
-        python, env = install_environments(root, drive, extensions, args.repair_environment)
+        python, env = install_environments(root, drive, extensions, args.repair_environment, require_all=args.install_only)
         if args.install_only:
             print("Installation complete. Python and both environments are stored on Drive. Rerun without --install-only after models are ready.", flush=True)
             return
